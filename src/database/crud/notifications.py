@@ -67,6 +67,15 @@ async def set_rule_active(rule_id: int, is_active: bool) -> NotificationRule | N
 async def delete_rule(rule_id: int) -> None:
     async with AsyncSessionLocal() as session:
         async with session.begin():
+            # remove dependent logs first to satisfy FK constraints
+            await session.execute(
+                delete(NotificationLog).where(NotificationLog.rule_id == rule_id)
+            )
+            # remove any scheduled entries referencing the rule
+            await session.execute(
+                delete(UserNotificationSchedule).where(UserNotificationSchedule.rule_id == rule_id)
+            )
+            # now safe to delete the rule itself
             await session.execute(delete(NotificationRule).where(NotificationRule.id == rule_id))
         logger.debug(f"Delete notification rule {rule_id}")
 
