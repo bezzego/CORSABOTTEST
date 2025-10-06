@@ -140,7 +140,9 @@ class TextSettingsOrm(Base):
 
 
 class NotificationType(str, Enum):
+    trial_expiring_soon = "trial_expiring_soon"
     trial_expired = "trial_expired"
+    paid_expiring_soon = "paid_expiring_soon"
     paid_expired = "paid_expired"
     new_user_no_keys = "new_user_no_keys"
     global_weekly = "global_weekly"
