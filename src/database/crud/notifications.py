@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Iterable, Sequence
 
-from sqlalchemy import delete, select, update, func
+from sqlalchemy import delete, select, update, func, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import selectinload
 
-from src.database.database import AsyncSessionLocal
+from src.database.database import AsyncSessionLocal, async_engine
 from src.database.models import (
     NotificationLog,
     NotificationLogStatus,
@@ -20,6 +21,27 @@ from src.logs import getLogger
 
 
 logger = getLogger(__name__)
+
+
+_enum_lock = asyncio.Lock()
+_enum_ready = False
+
+
+async def _ensure_notification_enum() -> None:
+    global _enum_ready
+    if _enum_ready:
+        return
+    async with _enum_lock:
+        if _enum_ready:
+            return
+        async with async_engine.begin() as conn:
+            for notif_type in NotificationType:
+                enum_literal = notif_type.value.replace("'", "''")
+                await conn.execute(
+                    text(f"ALTER TYPE notificationtype ADD VALUE IF NOT EXISTS '{enum_literal}'")
+                )
+        logger.info("Ensured notificationtype enum contains all values: %s", [t.value for t in NotificationType])
+        _enum_ready = True
 
 
 def _to_db_naive(dt: datetime | None) -> datetime | None:
@@ -36,6 +58,7 @@ def _to_db_naive(dt: datetime | None) -> datetime | None:
 
 
 async def create_rule(**kwargs) -> NotificationRule:
+    await _ensure_notification_enum()
     async with AsyncSessionLocal() as session:
         async with session.begin():
             rule = NotificationRule(**kwargs)
@@ -46,6 +69,8 @@ async def create_rule(**kwargs) -> NotificationRule:
 
 
 async def update_rule(rule_id: int, **kwargs) -> NotificationRule | None:
+    if "type" in kwargs:
+        await _ensure_notification_enum()
     async with AsyncSessionLocal() as session:
         async with session.begin():
             stmt = (
