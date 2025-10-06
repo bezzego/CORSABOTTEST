@@ -228,9 +228,9 @@ class NotificationService:
         has_active_paid = any(not key.is_test and key.finish >= now for key in keys)
         has_any_active = any(key.finish >= now for key in keys)
 
-        if rule.type == NotificationType.trial_expired:
+        if rule.type in (NotificationType.trial_expired, NotificationType.trial_expiring_soon):
             return not has_active_paid
-        if rule.type == NotificationType.paid_expired:
+        if rule.type in (NotificationType.paid_expired, NotificationType.paid_expiring_soon):
             return not has_active_paid
         if rule.type == NotificationType.new_user_no_keys:
             return not has_any_active
@@ -319,15 +319,40 @@ class NotificationService:
         await self.plan_event_notifications(user_id, NotificationType.new_user_no_keys, registered_at)
 
     async def on_trial_key_created(self, user_id: int, trial_finish: datetime) -> None:
-        await cancel_user_schedules(user_id, [NotificationType.new_user_no_keys])
+        await cancel_user_schedules(
+            user_id,
+            [
+                NotificationType.new_user_no_keys,
+                NotificationType.trial_expired,
+                NotificationType.trial_expiring_soon,
+            ],
+        )
+        await self.plan_event_notifications(user_id, NotificationType.trial_expiring_soon, trial_finish)
         await self.plan_event_notifications(user_id, NotificationType.trial_expired, trial_finish)
 
     async def on_paid_key_created(self, user_id: int, finish_datetime: datetime) -> None:
-        await cancel_user_schedules(user_id, [NotificationType.new_user_no_keys, NotificationType.trial_expired])
+        await cancel_user_schedules(
+            user_id,
+            [
+                NotificationType.new_user_no_keys,
+                NotificationType.trial_expired,
+                NotificationType.trial_expiring_soon,
+                NotificationType.paid_expired,
+                NotificationType.paid_expiring_soon,
+            ],
+        )
+        await self.plan_event_notifications(user_id, NotificationType.paid_expiring_soon, finish_datetime)
         await self.plan_event_notifications(user_id, NotificationType.paid_expired, finish_datetime)
 
     async def on_paid_key_prolonged(self, user_id: int, finish_datetime: datetime) -> None:
-        await cancel_user_schedules(user_id, [NotificationType.paid_expired])
+        await cancel_user_schedules(
+            user_id,
+            [
+                NotificationType.paid_expired,
+                NotificationType.paid_expiring_soon,
+            ],
+        )
+        await self.plan_event_notifications(user_id, NotificationType.paid_expiring_soon, finish_datetime)
         await self.plan_event_notifications(user_id, NotificationType.paid_expired, finish_datetime)
 
 

@@ -135,3 +135,7 @@ class AdminNotifications(StatesGroup):
 
     edit_select_rule = State()
     edit_toggle = State()
+    edit_menu = State()
+    edit_template = State()
+    edit_offset = State()
+    edit_repeat = State()
