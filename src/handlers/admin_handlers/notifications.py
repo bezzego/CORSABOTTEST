@@ -18,7 +18,7 @@ except ImportError:  # pragma: no cover
 from aiogram import F, Router
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from urllib.parse import urlparse
@@ -29,6 +29,7 @@ from src.database.crud.notifications import (
     delete_rule,
     get_rule,
     get_rules,
+    update_rule,
     set_rule_active,
 )
 from src.database.models import NotificationRule, NotificationType
@@ -47,10 +48,12 @@ logger = getLogger(__name__)
 
 
 TYPE_LABELS: Dict[NotificationType, str] = {
-    NotificationType.trial_expired:    "A) Закончился пробный ключ",
-    NotificationType.paid_expired:     "B) Закончился платный ключ",
-    NotificationType.new_user_no_keys: "C) Пользователь без ключей",
-    NotificationType.global_weekly:    "D) Глобальная рассылка",
+    NotificationType.trial_expiring_soon: "A) Пробный ключ: напоминание до окончания",
+    NotificationType.trial_expired:       "B) Пробный ключ: окончание",
+    NotificationType.paid_expiring_soon:  "C) Платный ключ: напоминание до окончания",
+    NotificationType.paid_expired:        "D) Платный ключ: окончание",
+    NotificationType.new_user_no_keys:    "E) Пользователь без ключей",
+    NotificationType.global_weekly:       "F) Глобальная рассылка",
 }
 
 WEEKDAY_LABELS: Dict[int, str] = {
@@ -128,7 +131,7 @@ async def process_rule_name(message: Message, state: FSMContext) -> None:
     else:
         await state.set_state(AdminNotifications.create_offset)
         await message.answer(
-            "Введите задержку отправки относительно события (например: 0, 12h, 2d, 1d6h):")
+            "Введите задержку отправки относительно события (например: 0, 12h, 2d, 1d6h, -12h — за 12 часов до события):")
 
 
 @router.callback_query(NotificationWeekdayCb.filter(F.action == "select"), AdminNotifications.create_weekday)
@@ -398,18 +401,242 @@ async def process_template(message: Message, state: FSMContext) -> None:
     await open_notifications_menu(message, state)
 
 
-@router.callback_query(NotificationRuleCb.filter(F.action == "show"), AdminMenu.notifications_menu)
+@router.message(AdminNotifications.edit_template, F.text | F.photo | F.video | F.document)
+async def handle_edit_template_message(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    rule_id = data.get("active_rule")
+    if not rule_id:
+        await state.set_state(AdminMenu.notifications_menu)
+        await message.answer("Не удалось определить правило. Вернитесь в меню уведомлений и выберите рассылку заново.")
+        return
+
+    template = serialize_template_from_message(message)
+    if not template:
+        await message.answer("Не удалось распознать шаблон. Попробуйте снова.")
+        return
+
+    await update_rule(int(rule_id), message_template=template)
+    await state.set_state(AdminNotifications.edit_menu)
+    await state.update_data(new_rule=None, temp_button_text=None, temp_button_type=None)
+    await message.answer("Шаблон обновлён.")
+    await state.update_data(active_rule=int(rule_id))
+    updated_rule = await get_rule(int(rule_id))
+    if updated_rule:
+        await message.answer(
+            format_rule(updated_rule),
+            reply_markup=build_edit_rule_keyboard(updated_rule),
+            parse_mode=ParseMode.HTML,
+        )
+
+
+@router.message(AdminNotifications.edit_offset, F.text)
+async def handle_edit_offset_value(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    rule_id = data.get("active_rule")
+    if not rule_id:
+        await state.set_state(AdminMenu.notifications_menu)
+        await message.answer("Не удалось определить правило. Вернитесь в меню уведомлений и выберите рассылку заново.")
+        return
+
+    value = (message.text or "").strip()
+    if value in {"0", "-", ""}:
+        offset_days = None
+        offset_hours = None
+    else:
+        try:
+            delta = parse_interval(value)
+        except ValueError as err:
+            await message.answer(str(err))
+            return
+        offset_days, offset_hours = split_timedelta(delta)
+        if offset_days == 0:
+            offset_days = None
+        if offset_hours == 0:
+            offset_hours = None
+
+    await update_rule(int(rule_id), offset_days=offset_days, offset_hours=offset_hours)
+    await state.set_state(AdminNotifications.edit_menu)
+    await state.update_data(
+        active_rule=int(rule_id),
+        new_rule=None,
+        temp_button_text=None,
+        temp_button_type=None,
+    )
+    updated_rule = await get_rule(int(rule_id))
+    await message.answer("Задержка обновлена.")
+    if updated_rule:
+        await message.answer(
+            format_rule(updated_rule),
+            reply_markup=build_edit_rule_keyboard(updated_rule),
+            parse_mode=ParseMode.HTML,
+        )
+
+
+@router.message(AdminNotifications.edit_repeat, F.text)
+async def handle_edit_repeat_value(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    rule_id = data.get("active_rule")
+    if not rule_id:
+        await state.set_state(AdminMenu.notifications_menu)
+        await message.answer("Не удалось определить правило. Вернитесь в меню уведомлений и выберите рассылку заново.")
+        return
+
+    value = (message.text or "").strip()
+    if value in {"0", "-", ""}:
+        repeat_days = None
+        repeat_hours = None
+    else:
+        try:
+            delta = parse_interval(value)
+        except ValueError as err:
+            await message.answer(str(err))
+            return
+        repeat_days, repeat_hours = split_timedelta(delta)
+        if repeat_days == 0:
+            repeat_days = None
+        if repeat_hours == 0:
+            repeat_hours = None
+
+    await update_rule(int(rule_id), repeat_every_days=repeat_days, repeat_every_hours=repeat_hours)
+    await state.set_state(AdminNotifications.edit_menu)
+    await state.update_data(
+        active_rule=int(rule_id),
+        new_rule=None,
+        temp_button_text=None,
+        temp_button_type=None,
+    )
+    updated_rule = await get_rule(int(rule_id))
+    await message.answer("Интервал повторения обновлён.")
+    if updated_rule:
+        await message.answer(
+            format_rule(updated_rule),
+            reply_markup=build_edit_rule_keyboard(updated_rule),
+            parse_mode=ParseMode.HTML,
+        )
+
+
+@router.callback_query(
+    NotificationRuleCb.filter(F.action == "show"),
+    StateFilter(
+        AdminMenu.notifications_menu,
+        AdminNotifications.edit_menu,
+        AdminNotifications.edit_template,
+        AdminNotifications.edit_offset,
+        AdminNotifications.edit_repeat,
+    ),
+)
 async def cb_show_rule(callback: CallbackQuery, callback_data: NotificationRuleCb, state: FSMContext) -> None:
     rule = await get_rule(int(callback_data.rule_id))
     if not rule:
         await callback.answer("Правило не найдено", show_alert=True)
         return
     await callback.answer()
+    await state.set_state(AdminMenu.notifications_menu)
     await state.update_data(active_rule=rule.id)
     await callback.message.edit_text(
         format_rule(rule),
         reply_markup=build_rule_actions_keyboard(rule),
         parse_mode=ParseMode.HTML,
+    )
+
+
+@router.callback_query(
+    NotificationRuleCb.filter(F.action == "edit"),
+    StateFilter(
+        AdminMenu.notifications_menu,
+        AdminNotifications.edit_menu,
+        AdminNotifications.edit_template,
+        AdminNotifications.edit_offset,
+        AdminNotifications.edit_repeat,
+    ),
+)
+async def cb_edit_rule(callback: CallbackQuery, callback_data: NotificationRuleCb, state: FSMContext) -> None:
+    rule = await get_rule(int(callback_data.rule_id))
+    if not rule:
+        await callback.answer("Правило не найдено", show_alert=True)
+        return
+    await callback.answer()
+    await state.set_state(AdminNotifications.edit_menu)
+    await state.update_data(active_rule=rule.id)
+    text = (
+        f"{format_rule(rule)}\n\nВыберите, что изменить:")
+    await callback.message.edit_text(
+        text,
+        reply_markup=build_edit_rule_keyboard(rule),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.callback_query(
+    NotificationRuleCb.filter(F.action == "edit_template"),
+    StateFilter(AdminNotifications.edit_menu),
+)
+async def cb_edit_template_start(callback: CallbackQuery, callback_data: NotificationRuleCb, state: FSMContext) -> None:
+    rule = await get_rule(int(callback_data.rule_id))
+    if not rule:
+        await callback.answer("Правило не найдено", show_alert=True)
+        return
+    await callback.answer()
+    await state.set_state(AdminNotifications.edit_template)
+    await state.update_data(active_rule=rule.id)
+    instructions = (
+        "Отправьте новый шаблон сообщения (текст, фото, видео или документ)."
+        " Если в сообщении будут inline-кнопки — они сохранятся."
+    )
+    await callback.message.edit_text(
+        instructions,
+        reply_markup=build_back_to_edit_keyboard(rule.id),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.callback_query(
+    NotificationRuleCb.filter(F.action == "edit_offset"),
+    StateFilter(AdminNotifications.edit_menu),
+)
+async def cb_edit_offset_start(callback: CallbackQuery, callback_data: NotificationRuleCb, state: FSMContext) -> None:
+    rule = await get_rule(int(callback_data.rule_id))
+    if not rule:
+        await callback.answer("Правило не найдено", show_alert=True)
+        return
+    if rule.type == NotificationType.global_weekly:
+        await callback.answer("Для недельных рассылок используется расписание, задержка недоступна.", show_alert=True)
+        return
+    await callback.answer()
+    await state.set_state(AdminNotifications.edit_offset)
+    await state.update_data(active_rule=rule.id)
+    help_text = (
+        "Введите новую задержку относительно события."
+        " Примеры: 12h, 1d6h. Укажите 0 для отправки в момент события."
+        " Чтобы отправить уведомление заранее, добавьте знак минус: -12h (за 12 часов).")
+    await callback.message.edit_text(
+        help_text,
+        reply_markup=build_back_to_edit_keyboard(rule.id),
+    )
+
+
+@router.callback_query(
+    NotificationRuleCb.filter(F.action == "edit_repeat"),
+    StateFilter(AdminNotifications.edit_menu),
+)
+async def cb_edit_repeat_start(callback: CallbackQuery, callback_data: NotificationRuleCb, state: FSMContext) -> None:
+    rule = await get_rule(int(callback_data.rule_id))
+    if not rule:
+        await callback.answer("Правило не найдено", show_alert=True)
+        return
+    if rule.type == NotificationType.global_weekly:
+        await callback.answer("Для недельных рассылок используется расписание.", show_alert=True)
+        return
+    await callback.answer()
+    await state.set_state(AdminNotifications.edit_repeat)
+    await state.update_data(active_rule=rule.id)
+    help_text = (
+        "Введите интервал повторения. Примеры: 24h, 3d."
+        " Укажите 0, чтобы выключить повтор."
+    )
+    await callback.message.edit_text(
+        help_text,
+        reply_markup=build_back_to_edit_keyboard(rule.id),
     )
 
 
@@ -553,6 +780,55 @@ def build_rules_keyboard(rules: Iterable[NotificationRule]) -> InlineKeyboardMar
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def build_edit_rule_keyboard(rule: NotificationRule) -> InlineKeyboardMarkup:
+    rows: List[List[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text="✏️ Изменить шаблон",
+                callback_data=NotificationRuleCb(action="edit_template", rule_id=rule.id).pack(),
+            )
+        ]
+    ]
+
+    if rule.type != NotificationType.global_weekly:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="⚙️ Задержка",
+                    callback_data=NotificationRuleCb(action="edit_offset", rule_id=rule.id).pack(),
+                ),
+                InlineKeyboardButton(
+                    text="♻️ Повтор",
+                    callback_data=NotificationRuleCb(action="edit_repeat", rule_id=rule.id).pack(),
+                ),
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="⬅ Назад",
+                callback_data=NotificationRuleCb(action="show", rule_id=rule.id).pack(),
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_back_to_edit_keyboard(rule_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="⬅ Назад",
+                    callback_data=NotificationRuleCb(action="edit", rule_id=rule_id).pack(),
+                )
+            ]
+        ]
+    )
+
+
 def build_rule_actions_keyboard(rule: NotificationRule) -> InlineKeyboardMarkup:
     status_text = "Отключить" if rule.is_active else "Включить"
     return InlineKeyboardMarkup(
@@ -565,6 +841,10 @@ def build_rule_actions_keyboard(rule: NotificationRule) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text="Предпросмотр",
                     callback_data=NotificationRuleCb(action="preview", rule_id=rule.id).pack(),
+                ),
+                InlineKeyboardButton(
+                    text="✏️ Редактировать",
+                    callback_data=NotificationRuleCb(action="edit", rule_id=rule.id).pack(),
                 ),
             ],
             [
@@ -615,22 +895,32 @@ def format_rule(rule: NotificationRule) -> str:
         weekday = WEEKDAY_LABELS.get(rule.weekday or 0, str(rule.weekday))
         parts.append(f"Расписание: {weekday} {rule.time_of_day.strftime('%H:%M')} ({rule.timezone})")
     else:
-        offset = format_timedelta(rule.offset_days, rule.offset_hours)
-        parts.append(f"Отправка через: {offset}")
-        repeat = format_timedelta(rule.repeat_every_days, rule.repeat_every_hours)
-        if repeat != "0ч":
-            parts.append(f"Повтор: каждые {repeat}")
+        offset_hours = total_hours_from_parts(rule.offset_days, rule.offset_hours)
+        if offset_hours < 0:
+            parts.append(f"Отправка за {format_hours(abs(offset_hours))} до события")
+        elif offset_hours > 0:
+            parts.append(f"Отправка через {format_hours(offset_hours)} после события")
+        else:
+            parts.append("Отправка в момент события")
+
+        repeat_hours = total_hours_from_parts(rule.repeat_every_days, rule.repeat_every_hours)
+        if repeat_hours > 0:
+            parts.append(f"Повтор: каждые {format_hours(repeat_hours)}")
     return "\n".join(parts)
 
 
-def format_timedelta(days: Optional[int], hours: Optional[int]) -> str:
-    total_days = days or 0
-    total_hours = hours or 0
-    parts = []
-    if total_days:
-        parts.append(f"{total_days}д")
-    if total_hours:
-        parts.append(f"{total_hours}ч")
+def total_hours_from_parts(days: Optional[int], hours: Optional[int]) -> int:
+    return (days or 0) * 24 + (hours or 0)
+
+
+def format_hours(total_hours: int) -> str:
+    total_hours = abs(total_hours)
+    days, hours = divmod(total_hours, 24)
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}д")
+    if hours:
+        parts.append(f"{hours}ч")
     if not parts:
         parts.append("0ч")
     return " ".join(parts)
@@ -640,6 +930,16 @@ def parse_interval(value: str) -> timedelta:
     value = value.lower().replace(" ", "")
     if not value:
         raise ValueError("Введите значение, например 12h или 2d.")
+
+    sign = 1
+    if value[0] in {"+", "-"}:
+        if value[0] == "-":
+            sign = -1
+        value = value[1:]
+
+    if not value:
+        raise ValueError("После знака необходимо указать значение, например -12h.")
+
     total = timedelta()
     number = ''
     for char in value:
@@ -656,14 +956,18 @@ def parse_interval(value: str) -> timedelta:
         number = ''
     if number:
         total += timedelta(hours=int(number))
+    total *= sign
     if total == timedelta():
         raise ValueError("Значение не может быть нулевым. Используйте 0 для отключения.")
     return total
 
 
 def split_timedelta(delta: timedelta) -> tuple[int, int]:
-    days = delta.days
-    hours = delta.seconds // 3600
+    total_seconds = delta.total_seconds()
+    if total_seconds % 3600 != 0:
+        raise ValueError("Интервал должен быть кратен одному часу.")
+    total_hours = int(total_seconds // 3600)
+    days, hours = divmod(total_hours, 24)
     return days, hours
 
 
