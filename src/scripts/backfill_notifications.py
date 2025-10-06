@@ -70,9 +70,9 @@ async def build_entries_for_type(
 
     # filter keys by event type
     def key_matches(k) -> bool:
-        if event_type == NotificationType.trial_expired:
+        if event_type in (NotificationType.trial_expired, NotificationType.trial_expiring_soon):
             return bool(getattr(k, "is_test", False))
-        if event_type == NotificationType.paid_expired:
+        if event_type in (NotificationType.paid_expired, NotificationType.paid_expiring_soon):
             return not bool(getattr(k, "is_test", False))
         # for other events include all keys
         return True
@@ -96,7 +96,7 @@ async def build_entries_for_type(
         # strict: exclude if user had paid (non-test) key active at planned_at
         for rule in rules:
             planned_at = calc_planned_at(finish, rule)
-            if strict and event_type == NotificationType.trial_expired:
+            if strict and event_type in (NotificationType.trial_expired, NotificationType.trial_expiring_soon):
                 # check for any paid key for this user that overlaps planned_at or is active at that time
                 user_keys = keys_by_user.get(k.user_id, [])
                 has_paid_active = any((not getattr(uk, "is_test", False)) and getattr(uk, "finish", None) and (uk.finish.astimezone(timezone.utc) >= planned_at) for uk in user_keys)
