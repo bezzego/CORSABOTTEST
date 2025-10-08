@@ -65,6 +65,22 @@ async def create_rule(**kwargs) -> NotificationRule:
             session.add(rule)
         await session.refresh(rule)
         logger.debug(f"Create notification rule: {rule}")
+        # --- Автоматическое создание расписаний для всех пользователей ---
+        from src.database.models import User  # локальный импорт, чтобы избежать циклических зависимостей
+        from datetime import datetime, timezone
+        if rule.is_active:
+            async with AsyncSessionLocal() as sub_session:
+                users_result = await sub_session.execute(select(User.id))
+                user_ids = [u for (u,) in users_result.all()]
+                entries = [
+                    (user_id, rule.id, datetime.now(timezone.utc), f"{rule.id}:{user_id}")
+                    for user_id in user_ids
+                ]
+                if entries:
+                    await bulk_upsert_schedule(entries)
+                    logger.info(
+                        f"Auto-created {len(entries)} user_notification_schedules for rule #{rule.id}"
+                    )
         return rule
 
 
