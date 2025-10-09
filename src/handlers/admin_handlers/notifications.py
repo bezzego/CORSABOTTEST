@@ -24,13 +24,11 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from urllib.parse import urlparse
 
 from src.database.crud.notifications import (
-    cancel_schedules_by_rule,
     create_rule,
     delete_rule,
     get_rule,
     get_rules,
     update_rule,
-    set_rule_active,
 )
 from src.database.models import NotificationRule, NotificationType
 from src.keyboards.admin_callback_datas import (
@@ -66,6 +64,10 @@ WEEKDAY_LABELS: Dict[int, str] = {
     6: "Воскресенье",
 }
 
+REMINDER_NOTIFICATION_TYPES = {
+    NotificationType.trial_expiring_soon,
+    NotificationType.paid_expiring_soon,
+}
 
 async def open_notifications_menu(message: Message, state: FSMContext) -> None:
     await state.set_state(AdminMenu.notifications_menu)
@@ -295,6 +297,17 @@ async def process_offset(message: Message, state: FSMContext) -> None:
 
     data = await state.get_data()
     new_rule = data.get("new_rule", {})
+    notif_type_value = new_rule.get("type")
+    if not notif_type_value:
+        await state.set_state(AdminMenu.notifications_menu)
+        await message.answer("Не удалось определить тип уведомления. Начните создание правила заново.")
+        await open_notifications_menu(message, state)
+        return
+    notif_type = NotificationType(notif_type_value)
+    if notif_type in REMINDER_NOTIFICATION_TYPES and delta == timedelta():
+        await message.answer("Для напоминаний необходимо указать смещение в днях или часах (например 12h или 1d).")
+        return
+
     new_rule["offset"] = delta
     await state.update_data(new_rule=new_rule)
     await state.set_state(AdminNotifications.create_repeat)
@@ -438,8 +451,17 @@ async def handle_edit_offset_value(message: Message, state: FSMContext) -> None:
         await message.answer("Не удалось определить правило. Вернитесь в меню уведомлений и выберите рассылку заново.")
         return
 
+    rule = await get_rule(int(rule_id))
+    if not rule:
+        await state.set_state(AdminMenu.notifications_menu)
+        await message.answer("Правило не найдено. Вернитесь в меню уведомлений и выберите рассылку заново.")
+        return
+
     value = (message.text or "").strip()
     if value in {"0", "-", ""}:
+        if rule.type in REMINDER_NOTIFICATION_TYPES:
+            await message.answer("Для напоминаний необходимо указать смещение в днях или часах (например 12h или 1d).")
+            return
         offset_days = None
         offset_hours = None
     else:
@@ -658,15 +680,18 @@ async def cb_toggle_rule(callback: CallbackQuery, callback_data: NotificationRul
     if not rule:
         await callback.answer("Правило не найдено", show_alert=True)
         return
-    await set_rule_active(rule.id, not rule.is_active)
-    updated = await get_rule(rule.id)
+
+    # Автоматическая реакция на смену статуса теперь внутри update_rule:
+    #  - при включении: создаются расписания для всех пользователей
+    #  - при выключении: отменяются незавершённые расписания
+    updated = await update_rule(rule.id, is_active=(not rule.is_active))
     if not updated:
         await callback.answer("Правило не найдено", show_alert=True)
         return
-    if not updated.is_active:
-        await cancel_schedules_by_rule(updated.id)
+
     if updated.type == NotificationType.global_weekly:
         await notification_service.refresh_global_jobs(callback.bot)
+
     await callback.answer("Статус обновлён")
     await callback.message.edit_text(
         format_rule(updated),

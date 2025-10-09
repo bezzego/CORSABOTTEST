@@ -1,9 +1,10 @@
 from enum import Enum
-from datetime import datetime, time
+from datetime import datetime, time, timezone
 from sqlalchemy import (
     ARRAY,
     BigInteger,
     Boolean,
+    Enum as SAEnum,
     ForeignKey,
     Integer,
     JSON,
@@ -50,11 +51,27 @@ class UsersOrm(Base):
     username: Mapped[str] = mapped_column(Text, nullable=True)
     balance: Mapped[float] = mapped_column(Numeric, nullable=False, default=0)
     test_sub: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    trial_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     used_promo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     enter_start_text: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=text("now()"))
 
     info: Mapped[dict] = mapped_column(JSON)
+
+    @property
+    def trial_time_left(self) -> dict:
+        """Возвращает оставшееся время по пробному периоду."""
+        if not self.trial_expires_at:
+            return {"expired": True, "days": 0, "hours": 0}
+
+        now = datetime.now(timezone.utc)
+        delta = self.trial_expires_at - now
+        if delta.total_seconds() <= 0:
+            return {"expired": True, "days": 0, "hours": 0}
+
+        days = delta.days
+        hours = delta.seconds // 3600
+        return {"expired": False, "days": days, "hours": hours}
 
 
 class AdminsOrm(Base):
@@ -116,8 +133,18 @@ class KeysOrm(Base):
     start: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
     finish: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-
     is_test: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+    @property
+    def time_left(self) -> dict:
+        """Возвращает оставшееся время до окончания ключа."""
+        now = datetime.now(timezone.utc)
+        delta = self.finish - now
+        if delta.total_seconds() <= 0:
+            return {"expired": True, "days": 0, "hours": 0}
+        days = delta.days
+        hours = delta.seconds // 3600
+        return {"expired": False, "days": days, "hours": hours}
 
 
 class TextSettingsOrm(Base):
@@ -150,27 +177,22 @@ class NotificationType(str, Enum):
 
 class NotificationRule(Base):
     __tablename__ = "notification_rules"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-    type: Mapped[NotificationType]
+    # use SAEnum so SQLAlchemy will load this column as NotificationType enum
+    type: Mapped[NotificationType] = mapped_column(SAEnum(NotificationType, name="notificationtype"), nullable=False)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
     offset_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
     offset_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     repeat_every_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
     repeat_every_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
     weekday: Mapped[int | None] = mapped_column(Integer, nullable=True)
     time_of_day: Mapped[time | None] = mapped_column(nullable=True)
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True, default="UTC")
-
     message_template: Mapped[dict] = mapped_column(JSON, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
-
     schedules: Mapped[list["UserNotificationSchedule"]] = relationship(
         back_populates="rule", cascade="all, delete-orphan")
 
@@ -193,14 +215,13 @@ class UserNotificationSchedule(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), index=True)
     rule_id: Mapped[int] = mapped_column(Integer, ForeignKey("notification_rules.id", ondelete="CASCADE"))
     planned_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    status: Mapped[NotificationScheduleStatus] = mapped_column(default=NotificationScheduleStatus.planned)
+    status: Mapped[NotificationScheduleStatus] = mapped_column(SAEnum(NotificationScheduleStatus, name="notificationschedulestatus"), default=NotificationScheduleStatus.planned)
     dedup_key: Mapped[str] = mapped_column(String(255), nullable=False)
     sent_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
-
-    rule: Mapped[NotificationRule] = relationship(back_populates="schedules")
+    rule: Mapped["NotificationRule"] = relationship(back_populates="schedules")
 
 
 class NotificationLogStatus(str, Enum):
@@ -215,7 +236,12 @@ class NotificationLog(Base):
     user_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=True)
     rule_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("notification_rules.id"), nullable=True)
     schedule_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("user_notification_schedules.id", ondelete="SET NULL"))
-    status: Mapped[NotificationLogStatus]
+    status: Mapped[NotificationLogStatus] = mapped_column(SAEnum(NotificationLogStatus, name="notificationlogstatus"))
     message_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     sent_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
+
+# Backwards-compatibility alias: some modules import `User`.
+# Historically code expected `User` to be available; export it as alias to UsersOrm.
+User = UsersOrm
