@@ -3,6 +3,10 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from datetime import datetime, timezone, timedelta
+try:
+    from zoneinfo import ZoneInfo
+except Exception:  # pragma: no cover - fallback if missing
+    from backports.zoneinfo import ZoneInfo  # type: ignore
 from typing import Collection, Iterable, Sequence, Set
 
 from sqlalchemy import delete, select, update, func, text
@@ -109,21 +113,30 @@ def _calc_planned_at_for_key(rule: NotificationRule, finish: datetime, now: date
     except Exception:
         rtype = rule.type
 
-    if finish_utc <= now and rtype in REMINDER_RULE_TYPES:
+    # For clarity and to ensure consistent send times we calculate planned moments
+    # in Moscow local time (Europe/Moscow) then convert to UTC for storage.
+    msk = ZoneInfo("Europe/Moscow")
+    finish_msk = finish_utc.astimezone(msk)
+
+    if finish_msk <= now.astimezone(msk) and rtype in REMINDER_RULE_TYPES:
         # reminder after expiration is pointless
         return None
-    if finish_utc < now and rtype in FINISH_RULE_TYPES:
+    if finish_msk < now.astimezone(msk) and rtype in FINISH_RULE_TYPES:
         # key already finished -> nothing to plan
         return None
+
     if rtype in FINISH_RULE_TYPES:
-        planned = finish_utc
+        planned_local = finish_msk
     else:
         # reminder types: subtract offset (days/hours). Default to zero if not provided.
         offset = timedelta(days=rule.offset_days or 0, hours=rule.offset_hours or 0)
-        planned = finish_utc - offset
-        if planned < now:
-            # planned moment already in the past -> send asap
-            planned = now
+        planned_local = finish_msk - offset
+        if planned_local < now.astimezone(msk):
+            # planned moment already in the past -> send asap (use now in msk)
+            planned_local = now.astimezone(msk)
+
+    # convert planned_local (MSK aware) back to UTC for DB/storage
+    planned = planned_local.astimezone(timezone.utc)
 
     return planned
 

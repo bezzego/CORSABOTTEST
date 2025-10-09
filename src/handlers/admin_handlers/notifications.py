@@ -132,8 +132,14 @@ async def process_rule_name(message: Message, state: FSMContext) -> None:
         )
     else:
         await state.set_state(AdminNotifications.create_offset)
-        await message.answer(
-            "Введите задержку отправки относительно события (например: 0, 12h, 2d, 1d6h, -12h — за 12 часов до события):")
+        if notif_type in REMINDER_NOTIFICATION_TYPES:
+            await message.answer(
+                "За какое время до окончания ключа отправить напоминание? "
+                "Например: 12h, 2d, 1d6h. Используйте положительные значения, чтобы сообщение ушло раньше окончания.")
+        else:
+            await message.answer(
+                "Введите задержку отправки относительно события. "
+                "Примеры: 0, 12h, 2d, 1d6h, -12h (минус — после события).")
 
 
 @router.callback_query(NotificationWeekdayCb.filter(F.action == "select"), AdminNotifications.create_weekday)
@@ -304,9 +310,10 @@ async def process_offset(message: Message, state: FSMContext) -> None:
         await open_notifications_menu(message, state)
         return
     notif_type = NotificationType(notif_type_value)
-    if notif_type in REMINDER_NOTIFICATION_TYPES and delta == timedelta():
-        await message.answer("Для напоминаний необходимо указать смещение в днях или часах (например 12h или 1d).")
-        return
+    if notif_type in REMINDER_NOTIFICATION_TYPES:
+        if delta <= timedelta():
+            await message.answer("Напоминание нужно отправлять заранее. Укажите положительное значение, например 12h или 1d.")
+            return
 
     new_rule["offset"] = delta
     await state.update_data(new_rule=new_rule)
@@ -470,6 +477,9 @@ async def handle_edit_offset_value(message: Message, state: FSMContext) -> None:
         except ValueError as err:
             await message.answer(str(err))
             return
+        if rule.type in REMINDER_NOTIFICATION_TYPES and delta <= timedelta():
+            await message.answer("Напоминание нужно отправлять заранее. Укажите положительное значение, например 12h или 1d.")
+            return
         offset_days, offset_hours = split_timedelta(delta)
         if offset_days == 0:
             offset_days = None
@@ -627,10 +637,15 @@ async def cb_edit_offset_start(callback: CallbackQuery, callback_data: Notificat
     await callback.answer()
     await state.set_state(AdminNotifications.edit_offset)
     await state.update_data(active_rule=rule.id)
-    help_text = (
-        "Введите новую задержку относительно события."
-        " Примеры: 12h, 1d6h. Укажите 0 для отправки в момент события."
-        " Чтобы отправить уведомление заранее, добавьте знак минус: -12h (за 12 часов).")
+    if rule.type in REMINDER_NOTIFICATION_TYPES:
+        help_text = (
+            "За какое время до окончания ключа отправлять это напоминание?"
+            " Примеры: 12h, 2d, 1d6h. Используйте положительные значения, чтобы сообщение ушло заранее.")
+    else:
+        help_text = (
+            "Введите новую задержку относительно события."
+            " Примеры: 12h, 1d6h. Укажите 0 для отправки в момент события."
+            " Чтобы отправить уведомление позже, добавьте знак минус: -12h (через 12 часов).")
     await callback.message.edit_text(
         help_text,
         reply_markup=build_back_to_edit_keyboard(rule.id),
@@ -918,15 +933,16 @@ def format_rule(rule: NotificationRule) -> str:
     ]
     if rule.type == NotificationType.global_weekly:
         weekday = WEEKDAY_LABELS.get(rule.weekday or 0, str(rule.weekday))
-        parts.append(f"Расписание: {weekday} {rule.time_of_day.strftime('%H:%M')} ({rule.timezone})")
+        tz = rule.timezone or "Europe/Moscow"
+        parts.append(f"Расписание: {weekday} {rule.time_of_day.strftime('%H:%M')} ({tz} / MSK)")
     else:
         offset_hours = total_hours_from_parts(rule.offset_days, rule.offset_hours)
         if offset_hours < 0:
-            parts.append(f"Отправка за {format_hours(abs(offset_hours))} до события")
+            parts.append(f"Отправка за {format_hours(abs(offset_hours))} до события (по МСК)")
         elif offset_hours > 0:
-            parts.append(f"Отправка через {format_hours(offset_hours)} после события")
+            parts.append(f"Отправка через {format_hours(offset_hours)} после события (по МСК)")
         else:
-            parts.append("Отправка в момент события")
+            parts.append("Отправка в момент события (по МСК)")
 
         repeat_hours = total_hours_from_parts(rule.repeat_every_days, rule.repeat_every_hours)
         if repeat_hours > 0:
@@ -952,9 +968,14 @@ def format_hours(total_hours: int) -> str:
 
 
 def parse_interval(value: str) -> timedelta:
+    """
+    Парсит строку интервала вида: 30m, 2h, 1d, 1d6h, -12h, 90m и т.д.
+    Поддерживаются суффиксы: m (минуты), h (часы), d (дни).
+    Можно комбинировать: 1d12h30m, -90m и т.д.
+    """
     value = value.lower().replace(" ", "")
     if not value:
-        raise ValueError("Введите значение, например 12h или 2d.")
+        raise ValueError("Введите значение, например 30m, 12h, 2d, 1d6h, -15m.")
 
     sign = 1
     if value[0] in {"+", "-"}:
@@ -963,24 +984,28 @@ def parse_interval(value: str) -> timedelta:
         value = value[1:]
 
     if not value:
-        raise ValueError("После знака необходимо указать значение, например -12h.")
+        raise ValueError("После знака необходимо указать значение, например -12h, -30m.")
 
     total = timedelta()
     number = ''
+    allowed = {'m', 'h', 'd'}
     for char in value:
         if char.isdigit():
             number += char
             continue
-        if char not in {'h', 'd'} or not number:
-            raise ValueError("Формат поддерживает только числа с суффиксом h или d. Пример: 24h, 2d.")
+        if char not in allowed or not number:
+            raise ValueError("Формат поддерживает только числа с суффиксом m, h или d. Пример: 30m, 24h, 2d.")
         amount = int(number)
-        if char == 'h':
+        if char == 'm':
+            total += timedelta(minutes=amount)
+        elif char == 'h':
             total += timedelta(hours=amount)
         elif char == 'd':
             total += timedelta(days=amount)
         number = ''
     if number:
-        total += timedelta(hours=int(number))
+        # Если после числа не было суффикса — по умолчанию минуты (например "30" = 30m)
+        total += timedelta(minutes=int(number))
     total *= sign
     if total == timedelta():
         raise ValueError("Значение не может быть нулевым. Используйте 0 для отключения.")
@@ -988,12 +1013,18 @@ def parse_interval(value: str) -> timedelta:
 
 
 def split_timedelta(delta: timedelta) -> tuple[int, int]:
-    total_seconds = delta.total_seconds()
-    if total_seconds % 3600 != 0:
-        raise ValueError("Интервал должен быть кратен одному часу.")
-    total_hours = int(total_seconds // 3600)
-    days, hours = divmod(total_hours, 24)
-    return days, hours
+    """
+    Делит timedelta на (days, hours), округляя минуты до часов.
+    Теперь поддерживает любые интервалы (в том числе с минутами).
+    """
+    total_seconds = int(delta.total_seconds())
+    sign = -1 if total_seconds < 0 else 1
+    total_seconds = abs(total_seconds)
+    total_minutes = total_seconds // 60
+    days, rem_minutes = divmod(total_minutes, 24 * 60)
+    hours, _minutes = divmod(rem_minutes, 60)
+    # Возвращаем только дни и часы (минуты игнорируются)
+    return sign * days, sign * hours
 
 
 def serialize_template_from_message(message: Message) -> Dict:

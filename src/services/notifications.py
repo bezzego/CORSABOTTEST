@@ -342,6 +342,15 @@ class NotificationService:
                 NotificationType.trial_expiring_soon,
             ],
         )
+        # Plan immediate pre/post event notifications in Moscow local time
+        try:
+            msk = ZoneInfo("Europe/Moscow")
+        except Exception:
+            msk = ZoneInfo("UTC")
+        finish_msk = _ensure_utc(_trial_finish).astimezone(msk)
+        # pre-event (reminder) and event (finished)
+        await self.plan_event_notifications(user_id, NotificationType.trial_expiring_soon, finish_msk)
+        await self.plan_event_notifications(user_id, NotificationType.trial_expired, finish_msk)
         # Plan notifications based on the trial finish event (reminder and finish)
         await self.plan_event_notifications(user_id, NotificationType.trial_expiring_soon, _trial_finish)
         await self.plan_event_notifications(user_id, NotificationType.trial_expired, _trial_finish)
@@ -357,6 +366,13 @@ class NotificationService:
                 NotificationType.paid_expiring_soon,
             ],
         )
+        try:
+            msk = ZoneInfo("Europe/Moscow")
+        except Exception:
+            msk = ZoneInfo("UTC")
+        finish_msk = _ensure_utc(_finish_datetime).astimezone(msk)
+        await self.plan_event_notifications(user_id, NotificationType.paid_expiring_soon, finish_msk)
+        await self.plan_event_notifications(user_id, NotificationType.paid_expired, finish_msk)
         # Plan notifications for paid key: reminder and finish
         await self.plan_event_notifications(user_id, NotificationType.paid_expiring_soon, _finish_datetime)
         await self.plan_event_notifications(user_id, NotificationType.paid_expired, _finish_datetime)
