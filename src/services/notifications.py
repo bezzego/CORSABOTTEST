@@ -323,7 +323,13 @@ class NotificationService:
         entries = []
         for rule in rules:
             offset = _calc_offset(rule)
-            planned_at = base_utc + offset
+            if rule.type in (
+                NotificationType.trial_expiring_soon,
+                NotificationType.paid_expiring_soon,
+            ):
+                planned_at = base_utc - offset
+            else:
+                planned_at = base_utc + offset
             dedup_key = f"{user_id}:{rule.id}:{int(planned_at.timestamp())}"
             entries.append((user_id, rule.id, planned_at, dedup_key))
 
