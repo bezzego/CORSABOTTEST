@@ -340,6 +340,7 @@ class NotificationService:
         await self.plan_event_notifications(user_id, NotificationType.new_user_no_keys, registered_at)
 
     async def on_trial_key_created(self, user_id: int, _trial_finish: datetime) -> None:
+        # Все уведомления планируются в UTC, чтобы исключить сдвиг из-за Europe/Moscow timezone.
         await cancel_user_schedules(
             user_id,
             [
@@ -348,20 +349,12 @@ class NotificationService:
                 NotificationType.trial_expiring_soon,
             ],
         )
-        # Plan immediate pre/post event notifications in Moscow local time
-        try:
-            msk = ZoneInfo("Europe/Moscow")
-        except Exception:
-            msk = ZoneInfo("UTC")
-        finish_msk = _ensure_utc(_trial_finish).astimezone(msk)
-        # pre-event (reminder) and event (finished)
-        await self.plan_event_notifications(user_id, NotificationType.trial_expiring_soon, finish_msk)
-        await self.plan_event_notifications(user_id, NotificationType.trial_expired, finish_msk)
-        # Plan notifications based on the trial finish event (reminder and finish)
-        await self.plan_event_notifications(user_id, NotificationType.trial_expiring_soon, _trial_finish)
-        await self.plan_event_notifications(user_id, NotificationType.trial_expired, _trial_finish)
+        finish_utc = _ensure_utc(_trial_finish)
+        await self.plan_event_notifications(user_id, NotificationType.trial_expiring_soon, finish_utc)
+        await self.plan_event_notifications(user_id, NotificationType.trial_expired, finish_utc)
 
     async def on_paid_key_created(self, user_id: int, _finish_datetime: datetime) -> None:
+        # Все уведомления планируются в UTC, чтобы исключить сдвиг из-за Europe/Moscow timezone.
         await cancel_user_schedules(
             user_id,
             [
@@ -372,16 +365,9 @@ class NotificationService:
                 NotificationType.paid_expiring_soon,
             ],
         )
-        try:
-            msk = ZoneInfo("Europe/Moscow")
-        except Exception:
-            msk = ZoneInfo("UTC")
-        finish_msk = _ensure_utc(_finish_datetime).astimezone(msk)
-        await self.plan_event_notifications(user_id, NotificationType.paid_expiring_soon, finish_msk)
-        await self.plan_event_notifications(user_id, NotificationType.paid_expired, finish_msk)
-        # Plan notifications for paid key: reminder and finish
-        await self.plan_event_notifications(user_id, NotificationType.paid_expiring_soon, _finish_datetime)
-        await self.plan_event_notifications(user_id, NotificationType.paid_expired, _finish_datetime)
+        finish_utc = _ensure_utc(_finish_datetime)
+        await self.plan_event_notifications(user_id, NotificationType.paid_expiring_soon, finish_utc)
+        await self.plan_event_notifications(user_id, NotificationType.paid_expired, finish_utc)
 
     async def on_paid_key_prolonged(self, user_id: int, _finish_datetime: datetime) -> None:
         await cancel_user_schedules(
