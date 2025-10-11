@@ -34,10 +34,17 @@ except ImportError:  # pragma: no cover
 logger = getLogger(__name__)
 
 
+# Все даты теперь считаются московским временем и не переводятся в UTC.
+from zoneinfo import ZoneInfo
+
 def _ensure_utc(dt: datetime) -> datetime:
+    """Все даты считаются московским временем (Europe/Moscow)."""
+    msk = ZoneInfo("Europe/Moscow")
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        # Если tzinfo отсутствует — считаем, что это московское локальное время
+        return dt.replace(tzinfo=msk)
+    # Если уже указана таймзона, просто переводим в московскую
+    return dt.astimezone(msk)
 
 
 def _calc_interval(rule: NotificationRule) -> timedelta:
@@ -318,6 +325,7 @@ class NotificationService:
         event_type: NotificationType,
         base_datetime: datetime,
     ) -> None:
+        # Используем точное UTC-время без дополнительного сдвига — чтобы 15:12 МСК не превращалось в 18:12
         base_utc = _ensure_utc(base_datetime)
         rules = await get_rules(event_type, active_only=True)
         entries = []
@@ -340,7 +348,7 @@ class NotificationService:
         await self.plan_event_notifications(user_id, NotificationType.new_user_no_keys, registered_at)
 
     async def on_trial_key_created(self, user_id: int, _trial_finish: datetime) -> None:
-        # Все уведомления планируются в UTC, чтобы исключить сдвиг из-за Europe/Moscow timezone.
+        # Все уведомления планируются по московскому времени.
         await cancel_user_schedules(
             user_id,
             [
@@ -354,7 +362,7 @@ class NotificationService:
         await self.plan_event_notifications(user_id, NotificationType.trial_expired, finish_utc)
 
     async def on_paid_key_created(self, user_id: int, _finish_datetime: datetime) -> None:
-        # Все уведомления планируются в UTC, чтобы исключить сдвиг из-за Europe/Moscow timezone.
+        # Все уведомления планируются по московскому времени.
         await cancel_user_schedules(
             user_id,
             [

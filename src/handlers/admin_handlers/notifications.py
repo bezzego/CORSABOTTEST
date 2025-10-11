@@ -254,19 +254,11 @@ async def process_time(message: Message, state: FSMContext) -> None:
         "Укажите таймзону (например Europe/Moscow). Отправьте '-' чтобы оставить UTC:")
 
 
+# Все уведомления создаются по московскому времени (Europe/Moscow)
 @router.message(AdminNotifications.create_timezone)
 async def process_timezone(message: Message, state: FSMContext) -> None:
-    value = message.text.strip()
-    tz_name = "UTC" if value == "-" or not value else value
-    try:
-        ZoneInfo(tz_name)
-    except Exception:
-        await message.answer("Не удалось распознать таймзону. Пример: Europe/Moscow. Попробуйте снова.")
-        return
-
-    # Safeguard: если вдруг tz_name содержит tzinfo (на практике это строка, но на будущее)
-    if hasattr(tz_name, 'tzinfo') and getattr(tz_name, 'tzinfo', None) is not None:
-        tz_name = tz_name.replace(tzinfo=None)
+    # По умолчанию используем московское время
+    tz_name = "Europe/Moscow"
 
     data = await state.get_data()
     new_rule = data.get("new_rule", {})
@@ -928,6 +920,7 @@ def build_weekday_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+ # Все расписания и смещения отображаются по московскому времени
 def format_rule(rule: NotificationRule) -> str:
     parts = [
         f"<b>{TYPE_LABELS[rule.type]}</b>",
@@ -936,7 +929,7 @@ def format_rule(rule: NotificationRule) -> str:
     ]
     if rule.type == NotificationType.global_weekly:
         weekday = WEEKDAY_LABELS.get(rule.weekday or 0, str(rule.weekday))
-        tz = rule.timezone or "Europe/Moscow"
+        tz = "Europe/Moscow"
         parts.append(f"Расписание: {weekday} {rule.time_of_day.strftime('%H:%M')} ({tz} / MSK)")
     else:
         offset_hours = total_hours_from_parts(rule.offset_days, rule.offset_hours)

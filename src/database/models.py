@@ -1,5 +1,6 @@
 from enum import Enum
 from datetime import datetime, time, timezone
+from zoneinfo import ZoneInfo
 from sqlalchemy import (
     ARRAY,
     BigInteger,
@@ -19,6 +20,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.ext.mutable import MutableList
 from src.database.database import Base
+
+msk = ZoneInfo("Europe/Moscow")
+
+# Все временные значения работают по московскому времени (Europe/Moscow)
 
 
 class PaymentStatus(str, Enum):
@@ -40,8 +45,8 @@ class PaymentsOrm(Base):
     key_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
     promo: Mapped[int] = mapped_column(BigInteger, nullable=True)
     device: Mapped[str] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=text("now()"))
-    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, onupdate=func.now(), default=func.now())
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), onupdate=func.now(), default=func.now())
 
 
 class UsersOrm(Base):
@@ -54,7 +59,7 @@ class UsersOrm(Base):
     trial_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     used_promo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     enter_start_text: Mapped[str] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=text("now()"))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
 
     info: Mapped[dict] = mapped_column(JSON)
 
@@ -64,7 +69,7 @@ class UsersOrm(Base):
         if not self.trial_expires_at:
             return {"expired": True, "days": 0, "hours": 0}
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(msk)
         delta = self.trial_expires_at - now
         if delta.total_seconds() <= 0:
             return {"expired": True, "days": 0, "hours": 0}
@@ -78,7 +83,7 @@ class AdminsOrm(Base):
     __tablename__ = "admins"
 
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=text("now()"))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
 
 
 class BannedOrm(Base):
@@ -86,7 +91,7 @@ class BannedOrm(Base):
 
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
     ban_reason: Mapped[str] = mapped_column(Text, nullable=True, default=None)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=text("now()"))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
 
 
 class TariffsOrm(Base):
@@ -105,7 +110,7 @@ class PromoOrm(Base):
     code: Mapped[str] = mapped_column(Text, nullable=False)
     price: Mapped[int] = mapped_column(Integer, nullable=False)
     users_limit: Mapped[int] = mapped_column(Integer, nullable=False)
-    finish_time: Mapped[datetime | None] = mapped_column(TIMESTAMP, nullable=True)
+    finish_time: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     users: Mapped[list] = mapped_column(MutableList.as_mutable(ARRAY(BigInteger)), default=[])
     tariffs: Mapped[list] = mapped_column(MutableList.as_mutable(ARRAY(BigInteger)), default=[])
 
@@ -130,15 +135,15 @@ class KeysOrm(Base):
     device: Mapped[str] = mapped_column(String, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=True, default=True)
     alerted: Mapped[bool] = mapped_column(Boolean, nullable=True, default=False)
-    start: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
-    finish: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
+    start: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    finish: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     is_test: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
     @property
     def time_left(self) -> dict:
         """Возвращает оставшееся время до окончания ключа."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(msk)
         delta = self.finish - now
         if delta.total_seconds() <= 0:
             return {"expired": True, "days": 0, "hours": 0}
@@ -179,7 +184,6 @@ class NotificationRule(Base):
     __tablename__ = "notification_rules"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-    # use SAEnum so SQLAlchemy will load this column as NotificationType enum
     type: Mapped[NotificationType] = mapped_column(SAEnum(NotificationType, name="notificationtype"), nullable=False)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     offset_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -191,10 +195,9 @@ class NotificationRule(Base):
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True, default="UTC")
     message_template: Mapped[dict] = mapped_column(JSON, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=text("now()"))
-    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
-    schedules: Mapped[list["UserNotificationSchedule"]] = relationship(
-        back_populates="rule", cascade="all, delete-orphan")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
+    schedules: Mapped[list["UserNotificationSchedule"]] = relationship(back_populates="rule", cascade="all, delete-orphan")
 
 
 class NotificationScheduleStatus(str, Enum):
@@ -207,20 +210,21 @@ class NotificationScheduleStatus(str, Enum):
 
 class UserNotificationSchedule(Base):
     __tablename__ = "user_notification_schedules"
-    __table_args__ = (
-        UniqueConstraint("dedup_key", name="uq_notification_schedule_dedup"),
-    )
+    __table_args__ = (UniqueConstraint("dedup_key", name="uq_notification_schedule_dedup"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), index=True)
     rule_id: Mapped[int] = mapped_column(Integer, ForeignKey("notification_rules.id", ondelete="CASCADE"))
     planned_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    status: Mapped[NotificationScheduleStatus] = mapped_column(SAEnum(NotificationScheduleStatus, name="notificationschedulestatus"), default=NotificationScheduleStatus.planned)
+    status: Mapped[NotificationScheduleStatus] = mapped_column(
+        SAEnum(NotificationScheduleStatus, name="notificationschedulestatus"),
+        default=NotificationScheduleStatus.planned,
+    )
     dedup_key: Mapped[str] = mapped_column(String(255), nullable=False)
     sent_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=text("now()"))
-    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
     rule: Mapped["NotificationRule"] = relationship(back_populates="schedules")
 
 
@@ -235,13 +239,14 @@ class NotificationLog(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=True)
     rule_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("notification_rules.id"), nullable=True)
-    schedule_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("user_notification_schedules.id", ondelete="SET NULL"))
+    schedule_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user_notification_schedules.id", ondelete="SET NULL")
+    )
     status: Mapped[NotificationLogStatus] = mapped_column(SAEnum(NotificationLogStatus, name="notificationlogstatus"))
     message_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     sent_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
 
 
-# Backwards-compatibility alias: some modules import `User`.
-# Historically code expected `User` to be available; export it as alias to UsersOrm.
+# Backwards-compatibility alias
 User = UsersOrm

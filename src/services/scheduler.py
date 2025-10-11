@@ -1,5 +1,6 @@
 import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta
 from src.database.crud.payments import get_payments_to_check, mark_payment_successful, delete_expired_payment
 from src.database.models import PaymentsOrm
@@ -11,7 +12,8 @@ from src.services.payments import check_payment
 logger = getLogger(__name__)
 
 
-scheduler = AsyncIOScheduler()
+# Планировщик теперь работает по московскому времени (Europe/Moscow)
+scheduler = AsyncIOScheduler(timezone=ZoneInfo("Europe/Moscow"))
 
 
 async def check_pending_payments(bot):

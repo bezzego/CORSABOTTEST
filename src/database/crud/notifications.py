@@ -1,12 +1,12 @@
+# Все операции с датами выполняются по московскому времени (Europe/Moscow)
+
 from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
 from datetime import datetime, timezone, timedelta
-try:
-    from zoneinfo import ZoneInfo
-except Exception:  # pragma: no cover - fallback if missing
-    from backports.zoneinfo import ZoneInfo  # type: ignore
+from zoneinfo import ZoneInfo
+msk = ZoneInfo("Europe/Moscow")
 from typing import Collection, Iterable, Sequence, Set
 
 from sqlalchemy import delete, select, update, func, text
@@ -92,8 +92,8 @@ def _ensure_aware_utc(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=msk)
+    return dt.astimezone(msk)
 
 
 def _rounded_for_dedup(dt: datetime) -> datetime:
@@ -102,10 +102,11 @@ def _rounded_for_dedup(dt: datetime) -> datetime:
     return dt.replace(second=seconds, microsecond=0)
 
 
+# Все вычисления planned_at теперь делаются по московскому времени (Europe/Moscow)
 def _calc_planned_at_for_key(rule: NotificationRule, finish: datetime, now: datetime) -> datetime | None:
-    """Return planned_at in UTC for the given key finish or None if it should be skipped."""
-    finish_utc = _ensure_aware_utc(finish)
-    if finish_utc is None:
+    """Return planned_at in MSK for the given key finish or None if it should be skipped."""
+    finish_msk = _ensure_aware_utc(finish)
+    if finish_msk is None:
         return None
     # Normalize rule.type to NotificationType in case DB returned a raw string
     try:
@@ -113,32 +114,20 @@ def _calc_planned_at_for_key(rule: NotificationRule, finish: datetime, now: date
     except Exception:
         rtype = rule.type
 
-    # For clarity and to ensure consistent send times we calculate planned moments
-    # in Moscow local time (Europe/Moscow) then convert to UTC for storage.
-    msk = ZoneInfo("Europe/Moscow")
-    finish_msk = finish_utc.astimezone(msk)
-
     if finish_msk <= now.astimezone(msk) and rtype in REMINDER_RULE_TYPES:
-        # reminder after expiration is pointless
         return None
     if finish_msk < now.astimezone(msk) and rtype in FINISH_RULE_TYPES:
-        # key already finished -> nothing to plan
         return None
 
     if rtype in FINISH_RULE_TYPES:
         planned_local = finish_msk
     else:
-        # reminder types: subtract offset (days/hours). Default to zero if not provided.
         offset = timedelta(days=rule.offset_days or 0, hours=rule.offset_hours or 0)
         planned_local = finish_msk - offset
         if planned_local < now.astimezone(msk):
-            # planned moment already in the past -> send asap (use now in msk)
             planned_local = now.astimezone(msk)
 
-    # convert planned_local (MSK aware) back to UTC for DB/storage
-    planned = planned_local.astimezone(timezone.utc)
-
-    return planned
+    return planned_local
 
 
 async def _delete_existing_planned(rule_id: int, user_ids: Collection[int] | None = None) -> None:
@@ -259,7 +248,7 @@ async def _auto_create_schedules_for_all_users(rule_id: int) -> int:
         # Найти пользователей, у которых нет активных ключей (ключи с finish > now)
         # models.py declares the user ORM as `UsersOrm` — import it under the name `User` for compatibility
         from src.database.models import UsersOrm as User
-        now = datetime.now(timezone.utc)
+        now = datetime.now(msk)
         # KeysOrm.finish is stored as TIMESTAMP (naive) in the DB; convert the aware UTC now to naive
         # before using it in comparisons to avoid asyncpg datetime type errors.
         naive_now = _to_db_naive(now)
@@ -499,7 +488,7 @@ async def mark_schedule_sent(
                 .where(UserNotificationSchedule.id == schedule_id)
                 .values(
                     status=NotificationScheduleStatus.sent,
-                    sent_at=datetime.now(timezone.utc),
+                    sent_at=datetime.now(msk),
                     last_error=None,
                 )
             )
@@ -528,7 +517,7 @@ async def mark_schedule_error(
                 .values(
                     status=NotificationScheduleStatus.error,
                     last_error=error,
-                    sent_at=datetime.now(timezone.utc),
+                    sent_at=datetime.now(msk),
                 )
             )
             log = NotificationLog(
@@ -549,7 +538,7 @@ async def cancel_user_schedules(user_id: int, types: Iterable[NotificationType] 
                 type_ids_stmt = select(NotificationRule.id).where(NotificationRule.type.in_(list(types)))
                 stmt = stmt.where(UserNotificationSchedule.rule_id.in_(type_ids_stmt))
             await session.execute(
-                stmt.values(status=NotificationScheduleStatus.cancelled, updated_at=_to_db_naive(datetime.now(timezone.utc)))
+                stmt.values(status=NotificationScheduleStatus.cancelled, updated_at=_to_db_naive(datetime.now(msk)))
             )
 
 
@@ -560,7 +549,7 @@ async def cancel_schedules_by_rule(rule_id: int, user_id: int | None = None) -> 
             if user_id:
                 stmt = stmt.where(UserNotificationSchedule.user_id == user_id)
             await session.execute(
-                stmt.values(status=NotificationScheduleStatus.cancelled, updated_at=_to_db_naive(datetime.now(timezone.utc)))
+                stmt.values(status=NotificationScheduleStatus.cancelled, updated_at=_to_db_naive(datetime.now(msk)))
             )
 
 
