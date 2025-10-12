@@ -59,6 +59,8 @@ class Config(BaseSettings):
     payments: PaymentsConfig = PaymentsConfig()
     logging: LoggingConfig = LoggingConfig()
     prefix: str = "corsarvpn"
+    # флаг для отключения уведомлений о ключах (например для тестов)
+    disable_key_notifications: bool = False
 
     @classmethod
     def load(cls) -> "Config":
