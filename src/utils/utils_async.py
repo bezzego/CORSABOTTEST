@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery, Message
 from src.database.crud import add_user, get_user_with_roles, get_users, get_text_settings
 from src.database.crud.admins import get_admins_list
 from src.database.crud.keys import get_user_keys, get_all_keys
+from src.database.crud.payments import get_success_payments
 from src.database.crud.promo import get_promos
 from src.database.crud.servers import check_servers, get_servers
 from src.keyboards.inline_user import edit_inline_keyboard_select_tariff, edit_inline_keyboard_select_device, \
@@ -175,13 +176,35 @@ async def broadcast_message(bot, message: Message, admin_id: int, user=None):
 
 async def export_users_to_excel():
     """Создание статистики по юзерам"""
-    users_data = {'№': [], 'ID': [], 'Имя и юзернейм': [], 'Пробная подписка': [], 'Промокод': [],
-                  'Кол-во ключей': [], 'Ключи': [], 'Дата появления': [], 'Ссылка': []}
+    users_data = {
+        '№': [],
+        'ID': [],
+        'Имя и юзернейм': [],
+        'Пробная подписка': [],
+        'Промокод': [],
+        'Кол-во ключей': [],
+        'Ключи': [],
+        'Пользователь покупал платный ключ': [],
+        'У пользователя есть текущий платный ключ': [],
+        'Общая сумма покупок': [],
+        'Дата появления': [],
+        'Ссылка': [],
+    }
 
     users = await get_users()
     servers = {server.id: server.host for server in await get_servers()}
     promos = await get_promos()
     promos_dict = {promo.id: promo for promo in promos}
+    success_payments = await get_success_payments()
+
+    payments_by_user: dict[int, list] = {}
+    for payment in success_payments:
+        payments_by_user.setdefault(payment.user_id, []).append(payment)
+
+    def to_naive_utc(dt: datetime) -> datetime:
+        if dt.tzinfo is not None:
+            return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
 
     for index, user in enumerate(sorted(users, key=lambda x: x.id), start=1):
         users_data['№'].append(index)
@@ -198,6 +221,24 @@ async def export_users_to_excel():
         else:
             keys_info = '-'
         users_data['Ключи'].append(keys_info)
+
+        user_payments = payments_by_user.get(user.id, [])
+        total_spent = sum(int(payment.amount) for payment in user_payments) if user_payments else 0
+        users_data['Пользователь покупал платный ключ'].append("Да" if user_payments else "Нет")
+        now_utc = datetime.utcnow()
+        has_active_paid_key = False
+        for key in user_keys:
+            if key.is_test:
+                continue
+            if not key.finish:
+                continue
+            finish_utc = to_naive_utc(key.finish)
+            is_active = key.active if key.active is not None else True
+            if is_active and finish_utc > now_utc:
+                has_active_paid_key = True
+                break
+        users_data['У пользователя есть текущий платный ключ'].append("Да" if has_active_paid_key else "Нет")
+        users_data['Общая сумма покупок'].append(total_spent)
 
         users_data['Дата появления'].append(user.created_at.strftime('%Y-%m-%d %H:%M:%S'))
         users_data['Ссылка'].append(user.enter_start_text or '-')

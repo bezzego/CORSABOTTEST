@@ -54,3 +54,14 @@ async def delete_expired_payment(payment: PaymentsOrm):
             payment = await session.get(PaymentsOrm, payment.id)
             if payment:
                 await session.delete(payment)
+
+
+async def get_success_payments() -> list[PaymentsOrm]:
+    """Получение всех платежей в статусе success."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(PaymentsOrm).where(PaymentsOrm.status == PaymentStatus.success)
+        )
+        if result:
+            return result.scalars().all()
+        return []
