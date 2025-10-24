@@ -271,9 +271,6 @@ async def keys_control_task(bot):
 
                     elif hours == 0:
                         if key.active:
-                            text_test = f"⚠️ Тестовый ключ 🔑{get_key_name_without_user_id(key)} был выключен, оформите подписку для получения нового ключа"
-                            text_not_test = f"⚠️ Ключ 🔑{get_key_name_without_user_id(key)} был выключен, у вас есть 24 часа, чтобы продлить оплату, иначе ключ будет удален"
-                            text = text_test if key.is_test else text_not_test
                             if not settings.disable_key_notifications:
                                 await send_notification_to_user(bot, key.user_id, text)
                             server = await get_server_by_id(key.server_id)
@@ -290,9 +287,6 @@ async def keys_control_task(bot):
                     days, hours, minutes = get_days_hours_by_ts(ts)
                     hours += days * 60
                     if hours >= 24:
-                        text = f"⚠️ Ключ 🔑{get_key_name_without_user_id(key)} удален из-за неуплаты"
-                        if not settings.disable_key_notifications:
-                            await send_notification_to_user(bot, key.user_id, text)
                         server = await get_server_by_id(key.server_id)
                         x3_class = X3UI(server)
                         if key.active:
