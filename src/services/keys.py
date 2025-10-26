@@ -11,7 +11,7 @@ from src.database.crud.keys import get_all_keys, update_key, delete_key
 from src.database.crud.servers import get_server_by_id
 from src.logs import getLogger
 from src.utils.utils import get_key_name_without_user_id, get_days_hours_by_ts
-from src.utils.utils_async import send_notification_to_user
+# notifications to users are intentionally not used in this module
 
 logger = getLogger(__name__)
 
@@ -259,11 +259,10 @@ async def keys_control_task(bot):
                     hours += days * 60
                     if 1 <= hours <= 24:
                         if not key.alerted:
-                            text_test = f"⚠️ Тестовый ключа 🔑{get_key_name_without_user_id(key)} будет отключен через 24 часа, оформите подписку для получения нового ключа"
-                            text_not_test = f"⚠️ Срок действия ключа 🔑{get_key_name_without_user_id(key)} истекает через 24 часа, продлите оплату, иначе ключ будет удален"
-                            text = text_test if key.is_test else text_not_test
-                            if not settings.disable_key_notifications:
-                                await send_notification_to_user(bot, key.user_id, text)
+                            # Пользовательские уведомления удалены: логируем, что следовало бы предупредить
+                            logger.debug(
+                                f"[keys_control_task] would alert user_id={key.user_id} about key {get_key_name_without_user_id(key)} expiring in <=24h, but notifications are suppressed"
+                            )
                             key.alerted = True
                             await update_key(key)
 
@@ -271,8 +270,10 @@ async def keys_control_task(bot):
 
                     elif hours == 0:
                         if key.active:
-                            if not settings.disable_key_notifications:
-                                await send_notification_to_user(bot, key.user_id, text)
+                            # Логируем действие вместо отправки уведомления пользователю
+                            logger.debug(
+                                f"[keys_control_task] would notify and turn off user_id={key.user_id} key={get_key_name_without_user_id(key)}, notifications suppressed"
+                            )
                             server = await get_server_by_id(key.server_id)
                             x3_class = X3UI(server)
                             x3_class.turn_off_user(key.name)
