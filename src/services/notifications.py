@@ -348,36 +348,36 @@ class NotificationService:
         await self.plan_event_notifications(user_id, NotificationType.new_user_no_keys, registered_at)
 
     async def on_trial_key_created(self, user_id: int, _trial_finish: datetime) -> None:
-        # Все уведомления планируются по московскому времени.
+        # Уведомления для ключевых правил теперь планируются через sync_user_key_rules
+        # при создании ключа в add_new_key, поэтому здесь только отменяем старые расписания
+        # для правил, которые больше не актуальны
         await cancel_user_schedules(
             user_id,
             [
                 NotificationType.new_user_no_keys,
-                NotificationType.trial_expired,
-                NotificationType.trial_expiring_soon,
             ],
         )
-        finish_utc = _ensure_utc(_trial_finish)
-        await self.plan_event_notifications(user_id, NotificationType.trial_expiring_soon, finish_utc)
-        await self.plan_event_notifications(user_id, NotificationType.trial_expired, finish_utc)
+        # Для ключевых правил (trial_expiring_soon, trial_expired) расписания создаются
+        # автоматически через sync_user_key_rules при создании ключа
 
     async def on_paid_key_created(self, user_id: int, _finish_datetime: datetime) -> None:
-        # Все уведомления планируются по московскому времени.
+        # Уведомления для ключевых правил теперь планируются через sync_user_key_rules
+        # при создании ключа в add_new_key, поэтому здесь только отменяем старые расписания
+        # для правил, которые больше не актуальны
         await cancel_user_schedules(
             user_id,
             [
                 NotificationType.new_user_no_keys,
                 NotificationType.trial_expired,
                 NotificationType.trial_expiring_soon,
-                NotificationType.paid_expired,
-                NotificationType.paid_expiring_soon,
             ],
         )
-        finish_utc = _ensure_utc(_finish_datetime)
-        await self.plan_event_notifications(user_id, NotificationType.paid_expiring_soon, finish_utc)
-        await self.plan_event_notifications(user_id, NotificationType.paid_expired, finish_utc)
+        # Для ключевых правил (paid_expiring_soon, paid_expired) расписания создаются
+        # автоматически через sync_user_key_rules при создании ключа
 
     async def on_paid_key_prolonged(self, user_id: int, _finish_datetime: datetime) -> None:
+        # При продлении ключа расписания пересчитываются автоматически через sync_user_key_rules
+        # Здесь только отменяем старые расписания, чтобы избежать дубликатов
         await cancel_user_schedules(
             user_id,
             [
@@ -385,6 +385,7 @@ class NotificationService:
                 NotificationType.paid_expiring_soon,
             ],
         )
+        # Расписания будут пересозданы через sync_user_key_rules при обновлении ключа
 
 
     async def preview_rule(self, bot: Bot, user_id: int, rule: NotificationRule) -> str | None:

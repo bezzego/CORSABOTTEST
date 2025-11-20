@@ -1,4 +1,5 @@
 import os
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # просто логика выбора env файла
@@ -21,13 +22,16 @@ class PostgresqlConfig(BaseSettings):
     port: str
     user: str
     password: str
-    db_name: str
+    # Используем validation_alias чтобы поддерживать DB_NAME вместо DB_DB_NAME
+    db_name: str = Field(validation_alias="DB_NAME")
 
     model_config = SettingsConfigDict(
         env_file=DEFAULT_ENV_FILE,
         env_prefix="DB_",
         env_file_encoding="utf-8",
-        extra="allow"
+        extra="allow",
+        # Позволяем читать переменные напрямую без префикса для db_name
+        populate_by_name=True,
     )
 
     @property

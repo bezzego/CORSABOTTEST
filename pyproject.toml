@@ -15,4 +15,8 @@ dependencies = [
     "sqlalchemy>=2.0.38",
     "xlsxwriter>=3.2.2",
     "yoomoney>=0.1.2",
+    "greenlet (>=3.2.4,<4.0.0)",
 ]
+
+[tool.poetry]
+package-mode = false

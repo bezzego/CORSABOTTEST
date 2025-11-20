@@ -102,32 +102,66 @@ def _rounded_for_dedup(dt: datetime) -> datetime:
     return dt.replace(second=seconds, microsecond=0)
 
 
-# Все вычисления planned_at теперь делаются по московскому времени (Europe/Moscow)
+# Все вычисления planned_at делаются по московскому времени (Europe/Moscow)
 def _calc_planned_at_for_key(rule: NotificationRule, finish: datetime, now: datetime) -> datetime | None:
-    """Return planned_at in MSK for the given key finish or None if it should be skipped."""
+    """
+    Вычисляет planned_at для уведомления на основе даты окончания ключа и правил.
+    
+    Args:
+        rule: Правило уведомления
+        finish: Дата окончания ключа (может быть naive или aware)
+        now: Текущее время для сравнения (должно быть aware)
+    
+    Returns:
+        planned_at в MSK или None если уведомление не должно быть отправлено
+    """
+    # Преобразуем finish в MSK (aware datetime)
     finish_msk = _ensure_aware_utc(finish)
     if finish_msk is None:
         return None
-    # Normalize rule.type to NotificationType in case DB returned a raw string
+    
+    # Преобразуем now в MSK если нужно
+    now_msk = now.astimezone(msk) if now.tzinfo else now.replace(tzinfo=msk)
+    
+    # Нормализуем тип правила
     try:
         rtype = rule.type if isinstance(rule.type, NotificationType) else NotificationType(rule.type)
     except Exception:
         rtype = rule.type
 
-    if finish_msk <= now.astimezone(msk) and rtype in REMINDER_RULE_TYPES:
-        return None
-    if finish_msk < now.astimezone(msk) and rtype in FINISH_RULE_TYPES:
-        return None
-
-    if rtype in FINISH_RULE_TYPES:
-        planned_local = finish_msk
-    else:
+    # Для напоминаний (expiring_soon): пропускаем если ключ уже истек
+    if rtype in REMINDER_RULE_TYPES:
+        if finish_msk <= now_msk:
+            return None  # Ключ уже истек, напоминание не нужно
+        
+        # Вычисляем planned_at: finish - offset
         offset = timedelta(days=rule.offset_days or 0, hours=rule.offset_hours or 0)
-        planned_local = finish_msk - offset
-        if planned_local < now.astimezone(msk):
-            planned_local = now.astimezone(msk)
-
-    return planned_local
+        planned_at = finish_msk - offset
+        
+        # Если вычисленное время в прошлом, отправляем сейчас
+        if planned_at < now_msk:
+            planned_at = now_msk
+        
+        return planned_at
+    
+    # Для уведомлений об окончании (expired): отправляем в момент окончания
+    elif rtype in FINISH_RULE_TYPES:
+        # Пропускаем если ключ уже истек давно (больше чем на секунду)
+        if finish_msk < now_msk:
+            return None
+        
+        # Добавляем offset если указан (для задержки после окончания)
+        offset = timedelta(days=rule.offset_days or 0, hours=rule.offset_hours or 0)
+        planned_at = finish_msk + offset
+        
+        # Если offset отрицательный и planned_at в прошлом, отправляем сейчас
+        if planned_at < now_msk:
+            planned_at = now_msk
+        
+        return planned_at
+    
+    # Для других типов правил
+    return None
 
 
 async def _delete_existing_planned(rule_id: int, user_ids: Collection[int] | None = None) -> None:
@@ -174,11 +208,25 @@ async def regenerate_rule_schedules(
     user_ids: Collection[int] | None = None,
     key_ids: Collection[int] | None = None,
 ) -> int:
-    """Rebuild schedules for the given rule limited to provided users or keys."""
+    """
+    Пересоздает расписания для указанного правила.
+    
+    Эта функция автоматически вызывается при создании/обновлении правила или ключа,
+    чтобы гарантировать, что все подходящие пользователи получат расписания.
+    
+    Args:
+        rule: Правило уведомления
+        user_ids: Ограничить пересоздание только для указанных пользователей (None = все)
+        key_ids: Ограничить пересоздание только для указанных ключей (None = все)
+    
+    Returns:
+        Количество созданных расписаний
+    """
     if rule.type not in KEY_RULE_TYPES or not rule.is_active:
         return 0
 
-    now = datetime.now(timezone.utc)
+    # Используем текущее время в MSK для корректных вычислений
+    now = datetime.now(msk)
     keys = await _load_keys_for_rule(rule, user_ids=user_ids, key_ids=key_ids)
     if not keys:
         return 0
@@ -186,15 +234,22 @@ async def regenerate_rule_schedules(
     entries: "OrderedDict[str, tuple[int, int, datetime, str]]" = OrderedDict()
     affected_user_ids: Set[int] = set()
     for key in keys:
+        # key.finish может быть naive (TIMESTAMP WITHOUT TIME ZONE)
+        # _calc_planned_at_for_key обработает это корректно
         planned_at = _calc_planned_at_for_key(rule, key.finish, now)
         if planned_at is None:
             continue
+        
+        # Округляем для дедупликации
         rounded = _rounded_for_dedup(planned_at)
-        # ensure we use enum value for dedup key even if rule.type is a raw string
+        
+        # Создаем уникальный ключ дедупликации
         try:
             rtype_val = rule.type.value if isinstance(rule.type, NotificationType) else NotificationType(rule.type).value
         except Exception:
             rtype_val = str(rule.type)
+        
+        # Используем ISO формат для стабильности
         dedup_key = f"{rule.id}:{key.user_id}:{rtype_val}:{rounded.isoformat()}"
         entries[dedup_key] = (key.user_id, rule.id, planned_at, dedup_key)
         affected_user_ids.add(key.user_id)
@@ -202,8 +257,12 @@ async def regenerate_rule_schedules(
     if not entries:
         return 0
 
+    # Удаляем старые запланированные расписания перед созданием новых
     await _delete_existing_planned(rule.id, affected_user_ids if user_ids or key_ids else None)
+    
+    # Создаем новые расписания
     await bulk_upsert_schedule(entries.values())
+    
     logger.info(
         "Regenerated %s schedules for rule_id=%s (users=%s, keys=%s)",
         len(entries),
@@ -298,21 +357,28 @@ async def create_rule(*, auto_schedule: bool = True, **kwargs) -> NotificationRu
 
 
 async def update_rule(rule_id: int, **kwargs) -> NotificationRule | None:
+    """
+    Обновляет правило уведомления и автоматически пересчитывает расписания.
+    
+    При изменении параметров, влияющих на расписание (offset, type, is_active),
+    автоматически пересоздаются расписания для всех подходящих пользователей.
+    """
     if "type" in kwargs:
         await _ensure_notification_enum()
 
-    # detect previous is_active to understand state transition
+    # Определяем предыдущее состояние is_active для обработки перехода
     old_is_active: bool | None = None
     updated_rule: NotificationRule | None = None
 
     async with AsyncSessionLocal() as session:
         async with session.begin():
-            # fetch current is_active before update (may be None if rule does not exist)
+            # Получаем текущее is_active до обновления
             res_old = await session.execute(
                 select(NotificationRule.is_active).where(NotificationRule.id == rule_id)
             )
             old_is_active = res_old.scalar_one_or_none()
 
+            # Обновляем правило
             stmt = (
                 update(NotificationRule)
                 .where(NotificationRule.id == rule_id)
@@ -328,21 +394,53 @@ async def update_rule(rule_id: int, **kwargs) -> NotificationRule | None:
         return None
 
     try:
+        # Если правило деактивировано, отменяем все запланированные расписания
         if "is_active" in kwargs and updated_rule.is_active is False:
             await cancel_schedules_by_rule(updated_rule.id)
+            logger.info("Cancelled all schedules for deactivated rule_id=%s", updated_rule.id)
             return updated_rule
 
+        # Получаем обновленное правило из БД
         refreshed_rule = await get_rule(rule_id) or updated_rule
+        
+        # Параметры, изменение которых требует пересчета расписаний
         rebuild_triggers = {"offset_days", "offset_hours", "type", "is_active"}
 
+        # Определяем, нужно ли пересчитывать расписания
         should_rebuild = False
+        
+        # Пересчитываем если правило активировано (было выключено, стало включено)
         if "is_active" in kwargs and old_is_active is False and refreshed_rule.is_active is True:
             should_rebuild = True
+            logger.info("Rule activated, regenerating schedules for rule_id=%s", rule_id)
+        
+        # Пересчитываем если правило активно и изменились параметры, влияющие на расписание
         elif refreshed_rule.is_active and rebuild_triggers.intersection(kwargs.keys()):
             should_rebuild = True
+            logger.info(
+                "Rule parameters changed, regenerating schedules for rule_id=%s (changed: %s)",
+                rule_id,
+                rebuild_triggers.intersection(kwargs.keys()),
+            )
 
+        # Пересчитываем расписания для всех подходящих пользователей
         if should_rebuild:
-            await regenerate_rule_schedules(refreshed_rule)
+            if refreshed_rule.type in KEY_RULE_TYPES:
+                # Для ключевых правил пересчитываем на основе всех ключей
+                count = await regenerate_rule_schedules(refreshed_rule)
+                logger.info(
+                    "Regenerated %s schedules for rule_id=%s after update",
+                    count,
+                    rule_id,
+                )
+            elif refreshed_rule.type == NotificationType.new_user_no_keys:
+                # Для правил new_user_no_keys также пересчитываем
+                count = await _auto_create_schedules_for_all_users(rule_id)
+                logger.info(
+                    "Regenerated %s schedules for new_user_no_keys rule_id=%s after update",
+                    count,
+                    rule_id,
+                )
     except Exception:
         logger.exception(
             "Post-update side-effect failed for rule_id=%s (old_active=%s, new_active=%s)",
@@ -438,11 +536,18 @@ async def bulk_upsert_schedule(entries: Iterable[tuple[int, int, datetime, str]]
 
 
 async def fetch_due_schedules(limit: int = 50) -> Sequence[UserNotificationSchedule]:
+    """
+    Получает расписания, которые готовы к отправке.
+    
+    Расписания считаются готовыми, если их planned_at <= текущее время.
+    Все сравнения выполняются с учетом временных зон.
+    """
     async with AsyncSessionLocal() as session:
-        # Use aware UTC timestamps for comparisons against TIMESTAMPTZ columns
+        # Используем aware UTC для сравнения с TIMESTAMPTZ колонками в БД
+        # PostgreSQL автоматически конвертирует все времена к UTC при сравнении
         now_utc = datetime.now(timezone.utc)
 
-        # Diagnostic: log how many planned schedules exist and earliest planned_at
+        # Диагностическая информация для отладки
         try:
             count_stmt = select(func.count()).select_from(UserNotificationSchedule).where(
                 UserNotificationSchedule.status == NotificationScheduleStatus.planned
@@ -454,10 +559,16 @@ async def fetch_due_schedules(limit: int = 50) -> Sequence[UserNotificationSched
             total_planned = total_result.scalar_one() or 0
             earliest_result = await session.execute(earliest_stmt)
             earliest = earliest_result.scalar_one_or_none()
-            logger.debug("Planned schedules total=%s earliest_planned_at=%s now_utc=%s", total_planned, earliest, now_utc)
+            logger.debug(
+                "Planned schedules total=%s earliest_planned_at=%s now_utc=%s",
+                total_planned,
+                earliest,
+                now_utc,
+            )
         except Exception:
             logger.exception("Failed to fetch diagnostic info for planned schedules")
 
+        # Выбираем расписания, которые готовы к отправке
         stmt = (
             select(UserNotificationSchedule)
             .options(selectinload(UserNotificationSchedule.rule))

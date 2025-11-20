@@ -127,20 +127,37 @@ async def process_rule_name(message: Message, state: FSMContext) -> None:
     if notif_type == NotificationType.global_weekly:
         await state.set_state(AdminNotifications.create_weekday)
         await message.answer(
-            "Выберите день недели:",
+            "📅 Выберите день недели для еженедельной рассылки:",
             reply_markup=build_weekday_keyboard(),
         )
     else:
         await state.set_state(AdminNotifications.create_offset)
         if notif_type in REMINDER_NOTIFICATION_TYPES:
             await message.answer(
-                "За какое время до окончания ключа отправить напоминание? "
-                "Например: 12h, 2d, 1d6h. Используйте положительные значения, чтобы сообщение ушло раньше окончания."
+                "⏰ <b>Напоминание до окончания ключа</b>\n\n"
+                "Укажите, за какое время ДО окончания ключа отправить напоминание.\n\n"
+                "<b>Примеры:</b>\n"
+                "• <code>12h</code> - напоминание за 12 часов до окончания\n"
+                "• <code>1d</code> - напоминание за 1 день до окончания\n"
+                "• <code>2d6h</code> - напоминание за 2 дня 6 часов до окончания\n"
+                "• <code>30m</code> - напоминание за 30 минут до окончания\n\n"
+                "💡 <i>Используйте формат: число + буква (m=минуты, h=часы, d=дни)</i>\n\n"
+                "Введите время до окончания:",
+                parse_mode=ParseMode.HTML,
             )
         else:
             await message.answer(
-                "Введите задержку отправки относительно события. "
-                "Примеры: 0, 12h, 2d, 1d6h, -12h (минус — после события)."
+                "⏰ <b>Время отправки уведомления об окончании</b>\n\n"
+                "Укажите, когда отправить уведомление относительно момента окончания ключа.\n\n"
+                "<b>Примеры:</b>\n"
+                "• <code>0</code> или пусто - отправить в момент окончания\n"
+                "• <code>12h</code> - отправить через 12 часов после окончания\n"
+                "• <code>1d</code> - отправить через 1 день после окончания\n"
+                "• <code>-12h</code> - отправить за 12 часов до окончания (как напоминание)\n\n"
+                "💡 <i>Используйте формат: число + буква (m=минуты, h=часы, d=дни)\n"
+                "Можно комбинировать: <code>1d6h</code> = 1 день 6 часов</i>\n\n"
+                "Введите задержку отправки:",
+                parse_mode=ParseMode.HTML,
             )
 
 
@@ -286,15 +303,7 @@ async def process_timezone(message: Message, state: FSMContext) -> None:
 @router.message(AdminNotifications.create_offset)
 async def process_offset(message: Message, state: FSMContext) -> None:
     value = message.text.strip()
-    if value in {"0", "-", ""}:
-        delta = timedelta()
-    else:
-        try:
-            delta = parse_interval(value)
-        except ValueError as err:
-            await message.answer(str(err))
-            return
-
+    
     data = await state.get_data()
     new_rule = data.get("new_rule", {})
     notif_type_value = new_rule.get("type")
@@ -304,16 +313,79 @@ async def process_offset(message: Message, state: FSMContext) -> None:
         await open_notifications_menu(message, state)
         return
     notif_type = NotificationType(notif_type_value)
+    
+    # Для напоминаний (expiring_soon) всегда отправляем заранее
     if notif_type in REMINDER_NOTIFICATION_TYPES:
-        if delta <= timedelta():
-            await message.answer("Напоминание нужно отправлять заранее. Укажите положительное значение, например 12h или 1d.")
+        if value in {"0", "-", ""}:
+            await message.answer(
+                "Для напоминаний нужно указать время ДО окончания ключа.\n\n"
+                "Примеры:\n"
+                "• 12h - напоминание за 12 часов до окончания\n"
+                "• 1d - напоминание за 1 день до окончания\n"
+                "• 2d6h - напоминание за 2 дня 6 часов до окончания\n\n"
+                "Введите время до окончания:"
+            )
             return
+        
+        try:
+            delta = parse_interval(value)
+            if delta <= timedelta():
+                await message.answer(
+                    "⚠️ Для напоминаний нужно указать положительное значение (заранее).\n\n"
+                    "Примеры правильных значений:\n"
+                    "• 12h - за 12 часов до окончания\n"
+                    "• 1d - за 1 день до окончания\n"
+                    "• 3d12h - за 3 дня 12 часов до окончания\n\n"
+                    "Повторите ввод:"
+                )
+                return
+        except ValueError as err:
+            await message.answer(
+                f"❌ Ошибка: {str(err)}\n\n"
+                "Правильный формат: число + буква (m/h/d)\n"
+                "Примеры: 30m, 12h, 2d, 1d6h\n\n"
+                "Повторите ввод:"
+            )
+            return
+    else:
+        # Для уведомлений об окончании можно указать задержку
+        if value in {"0", "-", ""}:
+            delta = timedelta()
+        else:
+            try:
+                delta = parse_interval(value)
+            except ValueError as err:
+                await message.answer(
+                    f"❌ Ошибка: {str(err)}\n\n"
+                    "Правильный формат: число + буква (m/h/d)\n"
+                    "Примеры:\n"
+                    "• 0 - отправить в момент окончания\n"
+                    "• 12h - отправить через 12 часов после окончания\n"
+                    "• -12h - отправить за 12 часов до окончания (аналог напоминания)\n\n"
+                    "Повторите ввод:"
+                )
+                return
 
     new_rule["offset"] = delta
     await state.update_data(new_rule=new_rule)
     await state.set_state(AdminNotifications.create_repeat)
-    await message.answer(
-        "Введите интервал повторения (0 - без повтора, например 24h или 3d):")
+    
+    # Более понятное описание для повтора
+    if notif_type in REMINDER_NOTIFICATION_TYPES or notif_type in (NotificationType.trial_expired, NotificationType.paid_expired):
+        await message.answer(
+            "📅 Интервал повторения уведомления:\n\n"
+            "• 0 или пусто - без повтора (отправить один раз)\n"
+            "• 24h - повторять каждые 24 часа\n"
+            "• 3d - повторять каждые 3 дня\n"
+            "• 1d12h - повторять каждые 1 день 12 часов\n\n"
+            "⚠️ Повтор работает только если пользователь все еще подходит под правило.\n"
+            "Например, для напоминаний об окончании пробного ключа - если у пользователя еще нет платного ключа.\n\n"
+            "Введите интервал повторения:"
+        )
+    else:
+        await message.answer(
+            "Введите интервал повторения (0 - без повтора, например 24h или 3d):"
+        )
 
 
 @router.message(AdminNotifications.create_repeat)
@@ -324,8 +396,23 @@ async def process_repeat(message: Message, state: FSMContext) -> None:
     else:
         try:
             delta = parse_interval(value)
+            if delta <= timedelta():
+                await message.answer(
+                    "⚠️ Интервал повторения должен быть положительным.\n\n"
+                    "Примеры:\n"
+                    "• 24h - повторять каждые 24 часа\n"
+                    "• 3d - повторять каждые 3 дня\n"
+                    "• 0 - без повтора\n\n"
+                    "Повторите ввод:"
+                )
+                return
         except ValueError as err:
-            await message.answer(str(err))
+            await message.answer(
+                f"❌ Ошибка: {str(err)}\n\n"
+                "Правильный формат: число + буква (m/h/d)\n"
+                "Примеры: 24h, 3d, 1d12h\n\n"
+                "Повторите ввод:"
+            )
             return
 
     data = await state.get_data()
@@ -333,8 +420,45 @@ async def process_repeat(message: Message, state: FSMContext) -> None:
     new_rule["repeat"] = delta
     await state.update_data(new_rule=new_rule)
     await state.set_state(AdminNotifications.collect_template)
+    
+    if delta is None:
+        repeat_text = "без повтора"
+    else:
+        # Преобразуем timedelta в дни и часы для форматирования
+        repeat_days, repeat_hours = split_timedelta(delta)
+        total_hours = total_hours_from_parts(repeat_days, repeat_hours)
+        repeat_text = f"каждые {format_hours(total_hours)}"
+    
     await message.answer(
-        "Отправьте шаблон сообщения (текст, фото, видео или документ). Чтобы добавить inline‑кнопки: нажмите «➕ Добавить кнопку», отправьте текст кнопки, выберите тип (URL/Callback) и укажите значение; повторите при необходимости или затем отправьте сам шаблон. Если вы отправите сообщение, уже содержащее кнопки — они будут использованы.")
+        f"✅ Интервал повторения: {repeat_text}\n\n"
+        "📝 <b>Теперь отправьте шаблон сообщения:</b>\n\n"
+        "Вы можете отправить:\n"
+        "• Текст сообщения\n"
+        "• Фото с подписью\n"
+        "• Видео с подписью\n"
+        "• Документ с подписью\n\n"
+        "🔘 <b>Добавление кнопок:</b>\n"
+        "1. Нажмите «➕ Добавить кнопку»\n"
+        "2. Отправьте текст кнопки\n"
+        "3. Выберите тип (URL или Callback)\n"
+        "4. Укажите значение\n"
+        "5. Повторите для других кнопок\n"
+        "6. Отправьте сам шаблон сообщения\n\n"
+        "💡 <i>Если в отправленном сообщении уже есть кнопки — они будут сохранены</i>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="➕ Добавить кнопку",
+                    callback_data=NotificationRuleCb(action="add_button", rule_id=None).pack(),
+                ),
+                InlineKeyboardButton(
+                    text="✅ Готово (отправьте шаблон)",
+                    callback_data=NotificationRuleCb(action="template_done", rule_id=None).pack(),
+                ),
+            ]
+        ]),
+    )
 
 
 @router.message(AdminNotifications.collect_template, F.text | F.photo | F.video | F.document)
@@ -459,26 +583,76 @@ async def handle_edit_offset_value(message: Message, state: FSMContext) -> None:
         return
 
     value = (message.text or "").strip()
-    if value in {"0", "-", ""}:
-        if rule.type in REMINDER_NOTIFICATION_TYPES:
-            await message.answer("Для напоминаний необходимо указать смещение в днях или часах (например 12h или 1d).")
+    
+    # Обработка для напоминаний (expiring_soon)
+    if rule.type in REMINDER_NOTIFICATION_TYPES:
+        if value in {"0", "-", ""}:
+            await message.answer(
+                "⚠️ Для напоминаний нужно указать время ДО окончания ключа.\n\n"
+                "Примеры:\n"
+                "• 12h - напоминание за 12 часов до окончания\n"
+                "• 1d - напоминание за 1 день до окончания\n"
+                "• 2d6h - напоминание за 2 дня 6 часов до окончания\n\n"
+                "Повторите ввод:",
+                reply_markup=build_back_to_edit_keyboard(rule.id),
+            )
             return
-        offset_days = None
-        offset_hours = None
-    else:
+        
         try:
             delta = parse_interval(value)
+            if delta <= timedelta():
+                await message.answer(
+                    "⚠️ Для напоминаний нужно указать положительное значение (заранее).\n\n"
+                    "Примеры правильных значений:\n"
+                    "• 12h - за 12 часов до окончания\n"
+                    "• 1d - за 1 день до окончания\n"
+                    "• 3d12h - за 3 дня 12 часов до окончания\n\n"
+                    "Повторите ввод:",
+                    reply_markup=build_back_to_edit_keyboard(rule.id),
+                )
+                return
         except ValueError as err:
-            await message.answer(str(err))
+            await message.answer(
+                f"❌ Ошибка: {str(err)}\n\n"
+                "Правильный формат: число + буква (m/h/d)\n"
+                "Примеры: 30m, 12h, 2d, 1d6h\n\n"
+                "Повторите ввод:",
+                reply_markup=build_back_to_edit_keyboard(rule.id),
+            )
             return
-        if rule.type in REMINDER_NOTIFICATION_TYPES and delta <= timedelta():
-            await message.answer("Напоминание нужно отправлять заранее. Укажите положительное значение, например 12h или 1d.")
-            return
+        
         offset_days, offset_hours = split_timedelta(delta)
         if offset_days == 0:
             offset_days = None
         if offset_hours == 0:
             offset_hours = None
+    
+    # Обработка для уведомлений об окончании
+    else:
+        if value in {"0", "-", ""}:
+            offset_days = None
+            offset_hours = None
+        else:
+            try:
+                delta = parse_interval(value)
+            except ValueError as err:
+                await message.answer(
+                    f"❌ Ошибка: {str(err)}\n\n"
+                    "Правильный формат: число + буква (m/h/d)\n"
+                    "Примеры:\n"
+                    "• 0 - отправить в момент окончания\n"
+                    "• 12h - отправить через 12 часов после окончания\n"
+                    "• -12h - отправить за 12 часов до окончания\n\n"
+                    "Повторите ввод:",
+                    reply_markup=build_back_to_edit_keyboard(rule.id),
+                )
+                return
+            
+            offset_days, offset_hours = split_timedelta(delta)
+            if offset_days == 0:
+                offset_days = None
+            if offset_hours == 0:
+                offset_hours = None
 
     await update_rule(int(rule_id), offset_days=offset_days, offset_hours=offset_hours)
     await state.set_state(AdminNotifications.edit_menu)
@@ -489,7 +663,7 @@ async def handle_edit_offset_value(message: Message, state: FSMContext) -> None:
         temp_button_type=None,
     )
     updated_rule = await get_rule(int(rule_id))
-    await message.answer("Задержка обновлена.")
+    await message.answer("✅ Задержка обновлена.")
     if updated_rule:
         await message.answer(
             format_rule(updated_rule),
