@@ -107,13 +107,18 @@ def _calc_planned_at_for_key(rule: NotificationRule, finish: datetime, now: date
     """
     Вычисляет planned_at для уведомления на основе даты окончания ключа и правил.
     
+    Логика:
+    - Для напоминаний (expiring_soon): отправка ДО окончания (finish - offset)
+    - Для уведомлений об окончании (expired): отправка ПОСЛЕ окончания (finish + offset)
+    
     Args:
         rule: Правило уведомления
-        finish: Дата окончания ключа (может быть naive или aware)
+        finish: Дата окончания ключа (TIMESTAMPTZ из БД, может быть naive или aware)
         now: Текущее время для сравнения (должно быть aware)
     
     Returns:
-        planned_at в MSK или None если уведомление не должно быть отправлено
+        planned_at как aware datetime в MSK или None если уведомление не должно быть отправлено
+        В БД сохраняется как TIMESTAMPTZ (автоматически конвертируется в UTC)
     """
     # Преобразуем finish в MSK (aware datetime)
     finish_msk = _ensure_aware_utc(finish)
@@ -129,13 +134,16 @@ def _calc_planned_at_for_key(rule: NotificationRule, finish: datetime, now: date
     except Exception:
         rtype = rule.type
 
-    # Для напоминаний (expiring_soon): пропускаем если ключ уже истек
+    # Вычисляем offset из правил
+    offset = timedelta(days=rule.offset_days or 0, hours=rule.offset_hours or 0)
+
+    # Для напоминаний (expiring_soon): отправляем ДО окончания
     if rtype in REMINDER_RULE_TYPES:
+        # Пропускаем если ключ уже истек
         if finish_msk <= now_msk:
             return None  # Ключ уже истек, напоминание не нужно
         
-        # Вычисляем planned_at: finish - offset
-        offset = timedelta(days=rule.offset_days or 0, hours=rule.offset_hours or 0)
+        # Вычисляем planned_at: finish - offset (отправляем заранее)
         planned_at = finish_msk - offset
         
         # Если вычисленное время в прошлом, отправляем сейчас
@@ -144,17 +152,17 @@ def _calc_planned_at_for_key(rule: NotificationRule, finish: datetime, now: date
         
         return planned_at
     
-    # Для уведомлений об окончании (expired): отправляем в момент окончания
+    # Для уведомлений об окончании (expired): отправляем ПОСЛЕ окончания
     elif rtype in FINISH_RULE_TYPES:
         # Пропускаем если ключ уже истек давно (больше чем на секунду)
-        if finish_msk < now_msk:
+        # Это позволяет отправить уведомление в момент окончания или сразу после
+        if finish_msk < now_msk - timedelta(seconds=1):
             return None
         
-        # Добавляем offset если указан (для задержки после окончания)
-        offset = timedelta(days=rule.offset_days or 0, hours=rule.offset_hours or 0)
+        # Добавляем offset (для задержки после окончания, если указан)
         planned_at = finish_msk + offset
         
-        # Если offset отрицательный и planned_at в прошлом, отправляем сейчас
+        # Если planned_at в прошлом, отправляем сейчас
         if planned_at < now_msk:
             planned_at = now_msk
         
@@ -209,13 +217,14 @@ async def regenerate_rule_schedules(
     key_ids: Collection[int] | None = None,
 ) -> int:
     """
-    Пересоздает расписания для указанного правила.
+    Пересоздает расписания для указанного правила на основе ключей пользователей.
     
-    Эта функция автоматически вызывается при создании/обновлении правила или ключа,
-    чтобы гарантировать, что все подходящие пользователи получат расписания.
+    Эта функция автоматически вызывается при:
+    - создании/обновлении правила уведомления
+    - создании/обновлении ключа пользователя
     
     Args:
-        rule: Правило уведомления
+        rule: Правило уведомления (должно быть типа KEY_RULE_TYPES)
         user_ids: Ограничить пересоздание только для указанных пользователей (None = все)
         key_ids: Ограничить пересоздание только для указанных ключей (None = все)
     
@@ -226,6 +235,7 @@ async def regenerate_rule_schedules(
         return 0
 
     # Используем текущее время в MSK для корректных вычислений
+    # В БД planned_at сохранится как TIMESTAMPTZ (автоматически в UTC)
     now = datetime.now(msk)
     keys = await _load_keys_for_rule(rule, user_ids=user_ids, key_ids=key_ids)
     if not keys:
@@ -234,13 +244,13 @@ async def regenerate_rule_schedules(
     entries: "OrderedDict[str, tuple[int, int, datetime, str]]" = OrderedDict()
     affected_user_ids: Set[int] = set()
     for key in keys:
-        # key.finish может быть naive (TIMESTAMP WITHOUT TIME ZONE)
-        # _calc_planned_at_for_key обработает это корректно
+        # key.finish хранится как TIMESTAMPTZ в БД (aware datetime)
+        # _calc_planned_at_for_key обработает это корректно и вернет aware datetime в MSK
         planned_at = _calc_planned_at_for_key(rule, key.finish, now)
         if planned_at is None:
             continue
         
-        # Округляем для дедупликации
+        # Округляем для дедупликации (до минут)
         rounded = _rounded_for_dedup(planned_at)
         
         # Создаем уникальный ключ дедупликации
@@ -258,9 +268,11 @@ async def regenerate_rule_schedules(
         return 0
 
     # Удаляем старые запланированные расписания перед созданием новых
+    # Это предотвращает дубликаты при пересоздании расписаний
     await _delete_existing_planned(rule.id, affected_user_ids if user_ids or key_ids else None)
     
     # Создаем новые расписания
+    # planned_at будет сохранен как TIMESTAMPTZ (PostgreSQL конвертирует в UTC)
     await bulk_upsert_schedule(entries.values())
     
     logger.info(
@@ -540,7 +552,11 @@ async def fetch_due_schedules(limit: int = 50) -> Sequence[UserNotificationSched
     Получает расписания, которые готовы к отправке.
     
     Расписания считаются готовыми, если их planned_at <= текущее время.
-    Все сравнения выполняются с учетом временных зон.
+    
+    Все сравнения выполняются с учетом временных зон:
+    - planned_at хранится как TIMESTAMPTZ в БД (в UTC)
+    - PostgreSQL автоматически конвертирует все времена к UTC при сравнении
+    - Используем UTC для сравнения, чтобы избежать проблем с таймзонами
     """
     async with AsyncSessionLocal() as session:
         # Используем aware UTC для сравнения с TIMESTAMPTZ колонками в БД
@@ -569,6 +585,7 @@ async def fetch_due_schedules(limit: int = 50) -> Sequence[UserNotificationSched
             logger.exception("Failed to fetch diagnostic info for planned schedules")
 
         # Выбираем расписания, которые готовы к отправке
+        # planned_at <= now_utc означает, что время отправки наступило или прошло
         stmt = (
             select(UserNotificationSchedule)
             .options(selectinload(UserNotificationSchedule.rule))

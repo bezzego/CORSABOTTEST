@@ -1,3 +1,42 @@
+"""
+Сервис управления уведомлениями для пользователей бота.
+
+ОСНОВНЫЕ ПРИНЦИПЫ РАБОТЫ:
+
+1. ТИПЫ УВЕДОМЛЕНИЙ:
+   A) trial_expiring_soon - напоминание о скором окончании пробного ключа
+   B) trial_expired - уведомление об окончании пробного ключа
+   C) paid_expiring_soon - напоминание о скором окончании платного ключа
+   D) paid_expired - уведомление об окончании платного ключа
+   E) new_user_no_keys - уведомление для пользователей без ключей
+   F) global_weekly - глобальная еженедельная рассылка
+
+2. ВРЕМЕННЫЕ ЗОНЫ:
+   - Все расчеты времени выполняются в московском времени (Europe/Moscow)
+   - В БД значения хранятся как TIMESTAMPTZ (автоматически конвертируются в UTC)
+   - При сравнении в БД используется UTC для корректной работы
+
+3. ЛОГИКА ОТПРАВКИ:
+   - Напоминания (expiring_soon): отправляются ДО события (finish - offset)
+   - Уведомления об окончании (expired): отправляются ПОСЛЕ события (finish + offset)
+   - Глобальные рассылки: по расписанию (день недели + время)
+
+4. ПОВТОР УВЕДОМЛЕНИЙ:
+   - Уведомления могут повторяться с указанным интервалом
+   - Повтор работает только если пользователь все еще подходит под условия правила
+   - Например, напоминания о пробном ключе повторяются только если нет платного ключа
+
+5. АВТОМАТИЧЕСКОЕ ПЛАНИРОВАНИЕ:
+   - При создании/обновлении ключа автоматически создаются расписания для правил A-D
+   - При создании/обновлении правила автоматически создаются расписания для всех подходящих пользователей
+   - При деактивации правила отменяются все запланированные уведомления
+
+6. ОТПРАВКА УВЕДОМЛЕНИЙ:
+   - Проверка готовых к отправке уведомлений выполняется каждые 60 секунд
+   - Обработка выполняется батчами по 50 штук для эффективности
+   - После отправки планируется повтор, если правило имеет интервал повтора
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -34,16 +73,23 @@ except ImportError:  # pragma: no cover
 logger = getLogger(__name__)
 
 
-# Все даты теперь считаются московским временем и не переводятся в UTC.
+# Все даты работают по московскому времени (Europe/Moscow) для расчетов,
+# но в БД хранятся как TIMESTAMPTZ (автоматически конвертируются в UTC)
 from zoneinfo import ZoneInfo
 
-def _ensure_utc(dt: datetime) -> datetime:
-    """Все даты считаются московским временем (Europe/Moscow)."""
-    msk = ZoneInfo("Europe/Moscow")
+msk = ZoneInfo("Europe/Moscow")
+
+def _ensure_msk(dt: datetime) -> datetime:
+    """
+    Преобразует datetime в московское время (Europe/Moscow).
+    
+    Используется для всех расчетов времени отправки уведомлений.
+    В БД значения хранятся как TIMESTAMPTZ и автоматически конвертируются.
+    """
     if dt.tzinfo is None:
         # Если tzinfo отсутствует — считаем, что это московское локальное время
         return dt.replace(tzinfo=msk)
-    # Если уже указана таймзона, просто переводим в московскую
+    # Если уже указана таймзона, переводим в московскую
     return dt.astimezone(msk)
 
 
@@ -72,6 +118,13 @@ class NotificationService:
         self.scheduler = None
 
     async def init(self, scheduler, bot: Bot) -> None:
+        """
+        Инициализирует сервис уведомлений.
+        
+        Настраивает:
+        - Периодическую проверку готовых к отправке уведомлений (каждые 60 секунд)
+        - Расписание для глобальных еженедельных рассылок
+        """
         self.scheduler = scheduler
         scheduler.add_job(
             self.dispatch_due_notifications,
@@ -80,12 +133,29 @@ class NotificationService:
             args=[bot],
             id=self.dispatcher_job_id,
             replace_existing=True,
+            # max_instances=1 гарантирует, что только один экземпляр задачи выполняется одновременно
+            max_instances=1,
+            # misfire_grace_time позволяет выполнить пропущенные задачи, если они не старше 2 минут
+            misfire_grace_time=120,
         )
         logger.info("NotificationService initialized: dispatcher job added (id=%s)", self.dispatcher_job_id)
         logger.info("Dispatcher job started and will run every 60s")
+        
+        # Сразу отправляем готовые уведомления при старте
+        try:
+            await self.dispatch_due_notifications(bot)
+        except Exception:
+            logger.exception("Failed to dispatch notifications on startup")
+        
         await self.refresh_global_jobs(bot)
 
     async def refresh_global_jobs(self, bot: Bot) -> None:
+        """
+        Обновляет расписание для глобальных еженедельных рассылок.
+        
+        Удаляет старые задачи и создает новые на основе активных правил.
+        По умолчанию используется таймзона Europe/Moscow.
+        """
         if not self.scheduler:
             return
 
@@ -98,8 +168,13 @@ class NotificationService:
         rules = await get_rules(NotificationType.global_weekly, active_only=True)
         for rule in rules:
             if rule.weekday is None or rule.time_of_day is None:
+                logger.warning(
+                    "Skipping global rule_id=%s: missing weekday or time_of_day",
+                    rule.id
+                )
                 continue
-            tz_name = rule.timezone or "UTC"
+            # По умолчанию используем московское время
+            tz_name = rule.timezone or "Europe/Moscow"
             trigger = CronTrigger(
                 day_of_week=str(rule.weekday),
                 hour=rule.time_of_day.hour,
@@ -130,6 +205,11 @@ class NotificationService:
             )
 
     async def enqueue_global_rule(self, bot: Bot, rule_id: int) -> None:
+        """
+        Ставит в очередь глобальную еженедельную рассылку для всех пользователей.
+        
+        Использует таймзону из правила (по умолчанию Europe/Moscow).
+        """
         rule = await get_rule(rule_id)
         if not rule or not rule.is_active:
             return
@@ -140,8 +220,12 @@ class NotificationService:
         except Exception:
             pass
 
-        now = datetime.now(ZoneInfo(rule.timezone or "UTC"))
-        planned_at = now.astimezone(timezone.utc)
+        # Используем таймзону из правила (по умолчанию Europe/Moscow)
+        tz_name = rule.timezone or "Europe/Moscow"
+        rule_tz = ZoneInfo(tz_name)
+        now = datetime.now(rule_tz)
+        # Сохраняем как aware datetime - PostgreSQL конвертирует в UTC при сохранении
+        planned_at = now
 
         try:
             users = await get_users() or []
@@ -154,19 +238,21 @@ class NotificationService:
             if entries:
                 await bulk_upsert_schedule(entries)
                 logger.info(
-                    "Enqueued global rule=%s for %d users at planned_at=%s (utc)",
+                    "Enqueued global rule=%s for %d users at planned_at=%s (tz=%s)",
                     rule.id,
                     len(entries),
                     planned_at,
+                    tz_name,
                 )
                 logger.info("Starting dispatch of due notifications after enqueue")
                 await self.dispatch_due_notifications(bot)
             else:
                 logger.info(
-                    "Enqueue global rule=%s: no users found (user_count=%s) planned_at=%s",
+                    "Enqueue global rule=%s: no users found (user_count=%s) planned_at=%s (tz=%s)",
                     rule.id,
                     user_count,
                     planned_at,
+                    tz_name,
                 )
 
         except Exception as exc:  # pragma: no cover - log DB/network errors
@@ -174,19 +260,62 @@ class NotificationService:
             return
 
     async def dispatch_due_notifications(self, bot: Bot) -> None:
-        # run until no due schedules left (process in batches)
+        """
+        Отправляет все готовые к отправке уведомления.
+        
+        Обрабатывает расписания батчами по 50 штук до тех пор, пока не останется
+        готовых к отправке. Это гарантирует, что все уведомления будут отправлены
+        даже если их много.
+        
+        Вызывается:
+        - каждые 60 секунд через планировщик (dispatcher_job)
+        - после постановки в очередь глобальных рассылок
+        - при старте сервиса
+        
+        Обработка выполняется в цикле для гарантии отправки всех готовых уведомлений,
+        даже если их создалось много за один раз.
+        """
         total_processed = 0
-        while True:
-            schedules = await fetch_due_schedules(limit=50)
-            if not schedules:
-                break
-            logger.debug("Dispatching batch of %d due schedules", len(schedules))
-            await self._process_batch(bot, schedules)
-            total_processed += len(schedules)
-        if total_processed:
-            logger.info("Dispatch complete: processed %d schedules", total_processed)
+        batch_count = 0
+        max_batches = 100  # Защита от бесконечного цикла (максимум 5000 уведомлений за раз)
+        
+        try:
+            while batch_count < max_batches:
+                schedules = await fetch_due_schedules(limit=50)
+                if not schedules:
+                    break
+                batch_count += 1
+                logger.debug("Dispatching batch #%d: %d due schedules", batch_count, len(schedules))
+                await self._process_batch(bot, schedules)
+                total_processed += len(schedules)
+            
+            if total_processed:
+                logger.info(
+                    "Dispatch complete: processed %d schedules in %d batches",
+                    total_processed,
+                    batch_count,
+                )
+            elif batch_count == max_batches:
+                logger.warning(
+                    "Dispatch stopped at max_batches limit (%d). "
+                    "There may be more schedules to process.",
+                    max_batches,
+                )
+        except Exception:
+            logger.exception("Error in dispatch_due_notifications")
+            raise
 
     async def _process_batch(self, bot: Bot, schedules: Sequence) -> None:
+        """
+        Обрабатывает батч расписаний: отправляет уведомления и планирует повторы.
+        
+        Для каждого расписания:
+        1. Проверяет, что правило активно
+        2. Отправляет сообщение пользователю
+        3. Помечает расписание как отправленное
+        4. Если правило имеет интервал повтора и пользователь все еще подходит -
+           планирует следующее уведомление
+        """
         for schedule in schedules:
             rule: NotificationRule = schedule.rule
             if not rule or not rule.is_active:
@@ -207,12 +336,18 @@ class NotificationService:
                     rule_id=rule.id,
                 )
 
-                if _calc_interval(rule) and await self._should_repeat(rule, schedule.user_id):
+                # Планируем повтор, если правило имеет интервал повтора
+                # и пользователь все еще подходит под условия правила
+                repeat_interval = _calc_interval(rule)
+                if repeat_interval and await self._should_repeat(rule, schedule.user_id):
                     await self._schedule_next_repeat(schedule.user_id, rule, schedule.planned_at)
 
             except Exception as exc:  # pragma: no cover
                 logger.error(
-                    f"Failed to send notification rule={rule.id} user={schedule.user_id}: {exc}",
+                    "Failed to send notification rule=%s user=%s: %s",
+                    rule.id,
+                    schedule.user_id,
+                    exc,
                     exc_info=True,
                 )
                 await mark_schedule_error(
@@ -232,7 +367,11 @@ class NotificationService:
         if not interval:
             return
 
-        next_planned = _ensure_utc(previous_planned_at) + interval
+        # Преобразуем previous_planned_at в MSK для расчетов, затем сохраняем как aware datetime
+        # PostgreSQL автоматически конвертирует TIMESTAMPTZ в UTC при сохранении
+        next_planned_msk = _ensure_msk(previous_planned_at) + interval
+        # Сохраняем как aware datetime (PostgreSQL конвертирует в UTC)
+        next_planned = next_planned_msk
         try:
             rtype = rule.type if isinstance(rule.type, NotificationType) else NotificationType(rule.type)
         except Exception:
@@ -241,24 +380,55 @@ class NotificationService:
         await upsert_schedule(user_id, rule.id, next_planned, dedup_key)
 
     async def _should_repeat(self, rule: NotificationRule, user_id: int) -> bool:
+        """
+        Определяет, нужно ли повторять уведомление для пользователя.
+        
+        Логика повтора:
+        - Для уведомлений о пробных ключах: повторяем только если нет платного ключа
+        - Для уведомлений о платных ключах: повторяем только если нет активного платного ключа
+        - Для уведомлений пользователям без ключей: повторяем только если нет активных ключей
+        
+        Returns:
+            True если уведомление должно повторяться, False иначе
+        """
         keys = await get_user_keys(user_id)
-        now = datetime.now()
+        now = datetime.now(msk)  # Используем московское время для сравнения
         has_active_paid = any(not key.is_test and key.finish >= now for key in keys)
         has_any_active = any(key.finish >= now for key in keys)
+        
         try:
             rtype = rule.type if isinstance(rule.type, NotificationType) else NotificationType(rule.type)
         except Exception:
             rtype = rule.type
 
+        # Для уведомлений о пробных ключах: повторяем только если нет платного ключа
         if rtype in (NotificationType.trial_expired, NotificationType.trial_expiring_soon):
             return not has_active_paid
+        
+        # Для уведомлений о платных ключах: повторяем только если нет активного платного ключа
         if rtype in (NotificationType.paid_expired, NotificationType.paid_expiring_soon):
             return not has_active_paid
+        
+        # Для уведомлений пользователям без ключей: повторяем только если нет активных ключей
         if rtype == NotificationType.new_user_no_keys:
             return not has_any_active
+        
         return False
 
     async def _send_message(self, bot: Bot, user_id: int, rule: NotificationRule) -> str | None:
+        """
+        Отправляет сообщение пользователю согласно шаблону правила.
+        
+        Поддерживает:
+        - Текстовые сообщения
+        - Фото с подписью
+        - Видео с подписью
+        - Документы с подписью
+        - Inline-кнопки (URL или callback_data)
+        
+        Returns:
+            message_id отправленного сообщения или None
+        """
         template = rule.message_template or {}
         text = template.get("text")
         parse_mode = template.get("parse_mode", ParseMode.HTML)
@@ -270,16 +440,52 @@ class NotificationService:
 
         try:
             if media_type == "photo" and media_id:
-                message = await bot.send_photo(user_id, photo=media_id, caption=text, parse_mode=parse_mode, reply_markup=reply_markup)
+                message = await bot.send_photo(
+                    user_id,
+                    photo=media_id,
+                    caption=text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                )
             elif media_type == "video" and media_id:
-                message = await bot.send_video(user_id, video=media_id, caption=text, parse_mode=parse_mode, reply_markup=reply_markup)
+                message = await bot.send_video(
+                    user_id,
+                    video=media_id,
+                    caption=text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                )
             elif media_type == "document" and media_id:
-                message = await bot.send_document(user_id, document=media_id, caption=text, parse_mode=parse_mode, reply_markup=reply_markup)
+                message = await bot.send_document(
+                    user_id,
+                    document=media_id,
+                    caption=text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                )
             else:
-                message = await bot.send_message(user_id, text or "", parse_mode=parse_mode, reply_markup=reply_markup)
+                # Текстовое сообщение
+                if not text:
+                    logger.warning(
+                        "Empty text in rule_id=%s template, sending empty message",
+                        getattr(rule, "id", None),
+                    )
+                message = await bot.send_message(
+                    user_id,
+                    text or "",
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                )
         except TelegramBadRequest as exc:
-            # Log and re-raise so caller can mark schedule as error
-            logger.error("TelegramBadRequest while sending to user %s rule=%s: %s", user_id, getattr(rule, "id", None), exc, exc_info=True)
+            # Пользователь заблокировал бота, удалил аккаунт и т.д.
+            # Логируем и пробрасываем исключение, чтобы пометить расписание как ошибку
+            logger.error(
+                "TelegramBadRequest while sending to user %s rule=%s: %s",
+                user_id,
+                getattr(rule, "id", None),
+                exc,
+                exc_info=True,
+            )
             raise
 
         return str(message.message_id) if message else None
@@ -325,8 +531,16 @@ class NotificationService:
         event_type: NotificationType,
         base_datetime: datetime,
     ) -> None:
-        # Используем точное UTC-время без дополнительного сдвига — чтобы 15:12 МСК не превращалось в 18:12
-        base_utc = _ensure_utc(base_datetime)
+        """
+        Планирует уведомления для события пользователя.
+        
+        Для напоминаний (expiring_soon): отправка ДО события (base_datetime - offset)
+        Для уведомлений об окончании (expired): отправка ПОСЛЕ события (base_datetime + offset)
+        
+        Все расчеты выполняются в московском времени, в БД сохраняются как TIMESTAMPTZ.
+        """
+        # Преобразуем в московское время для расчетов
+        base_msk = _ensure_msk(base_datetime)
         rules = await get_rules(event_type, active_only=True)
         entries = []
         for rule in rules:
@@ -335,9 +549,17 @@ class NotificationService:
                 NotificationType.trial_expiring_soon,
                 NotificationType.paid_expiring_soon,
             ):
-                planned_at = base_utc - offset
+                # Напоминания: отправляем ДО события
+                planned_at = base_msk - offset
             else:
-                planned_at = base_utc + offset
+                # Уведомления об окончании: отправляем ПОСЛЕ события (или в момент, если offset=0)
+                planned_at = base_msk + offset
+            
+            # Если запланированное время в прошлом, отправляем сейчас
+            now_msk = datetime.now(msk)
+            if planned_at < now_msk:
+                planned_at = now_msk
+            
             dedup_key = f"{user_id}:{rule.id}:{int(planned_at.timestamp())}"
             entries.append((user_id, rule.id, planned_at, dedup_key))
 
@@ -348,22 +570,31 @@ class NotificationService:
         await self.plan_event_notifications(user_id, NotificationType.new_user_no_keys, registered_at)
 
     async def on_trial_key_created(self, user_id: int, _trial_finish: datetime) -> None:
-        # Уведомления для ключевых правил теперь планируются через sync_user_key_rules
-        # при создании ключа в add_new_key, поэтому здесь только отменяем старые расписания
-        # для правил, которые больше не актуальны
+        """
+        Обработчик создания пробного ключа.
+        
+        Отменяет уведомления для пользователей без ключей, так как теперь у пользователя есть ключ.
+        Уведомления для пробного ключа (trial_expiring_soon, trial_expired) создаются
+        автоматически через sync_user_key_rules при создании ключа в add_new_key.
+        """
         await cancel_user_schedules(
             user_id,
             [
                 NotificationType.new_user_no_keys,
             ],
         )
-        # Для ключевых правил (trial_expiring_soon, trial_expired) расписания создаются
-        # автоматически через sync_user_key_rules при создании ключа
 
     async def on_paid_key_created(self, user_id: int, _finish_datetime: datetime) -> None:
-        # Уведомления для ключевых правил теперь планируются через sync_user_key_rules
-        # при создании ключа в add_new_key, поэтому здесь только отменяем старые расписания
-        # для правил, которые больше не актуальны
+        """
+        Обработчик создания платного ключа.
+        
+        Отменяет уведомления для:
+        - пользователей без ключей (теперь есть ключ)
+        - пробных ключей (заменены платным)
+        
+        Уведомления для платного ключа (paid_expiring_soon, paid_expired) создаются
+        автоматически через sync_user_key_rules при создании ключа в add_new_key.
+        """
         await cancel_user_schedules(
             user_id,
             [
@@ -372,12 +603,15 @@ class NotificationService:
                 NotificationType.trial_expiring_soon,
             ],
         )
-        # Для ключевых правил (paid_expiring_soon, paid_expired) расписания создаются
-        # автоматически через sync_user_key_rules при создании ключа
 
     async def on_paid_key_prolonged(self, user_id: int, _finish_datetime: datetime) -> None:
-        # При продлении ключа расписания пересчитываются автоматически через sync_user_key_rules
-        # Здесь только отменяем старые расписания, чтобы избежать дубликатов
+        """
+        Обработчик продления платного ключа.
+        
+        Отменяет старые расписания для платного ключа, чтобы избежать дубликатов.
+        Новые расписания будут пересозданы через sync_user_key_rules при обновлении ключа
+        в update_key (который вызывается из prolong_key).
+        """
         await cancel_user_schedules(
             user_id,
             [
@@ -385,7 +619,6 @@ class NotificationService:
                 NotificationType.paid_expiring_soon,
             ],
         )
-        # Расписания будут пересозданы через sync_user_key_rules при обновлении ключа
 
 
     async def preview_rule(self, bot: Bot, user_id: int, rule: NotificationRule) -> str | None:
