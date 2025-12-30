@@ -269,6 +269,28 @@ async def clb_paginate_transfer_servers(callback: CallbackQuery, callback_data: 
     await callback.answer()
 
 
+@router.callback_query(TransferKeyServer.filter(F.action == "pagination"), AdminUsers.transfer_all_keys_select_first)
+async def clb_paginate_transfer_all_keys_first(callback: CallbackQuery, callback_data: TransferKeyServer, state: FSMContext):
+    servers = await get_servers()
+    new_markup = await get_transfer_server_buttons(TransferKeyServer, servers, page=callback_data.page)
+
+    await callback.message.edit_reply_markup(reply_markup=new_markup)
+    await callback.answer()
+
+
+@router.callback_query(TransferKeyServer.filter(F.action == "pagination"), AdminUsers.transfer_all_keys_select_second)
+async def clb_paginate_transfer_all_keys_second(callback: CallbackQuery, callback_data: TransferKeyServer, state: FSMContext):
+    state_data = await state.get_data()
+    first_server_id = int(state_data.get("server_id_first", 0))
+    servers = await get_servers()
+    # Remove the first selected server from the list
+    servers = [s for s in servers if s.id != first_server_id]
+    new_markup = await get_transfer_server_buttons(TransferKeyServer, servers, page=callback_data.page)
+
+    await callback.message.edit_reply_markup(reply_markup=new_markup)
+    await callback.answer()
+
+
 @router.callback_query(TransferKeyServer.filter(F.action == "select"), AdminUsers.transfer_key_select_server)
 async def clb_select_transfer_servers(callback: CallbackQuery, callback_data: TransferKeyServer, state: FSMContext):
     state_data = await state.get_data()
@@ -295,9 +317,8 @@ async def clb_select_transfer_servers(callback: CallbackQuery, callback_data: Tr
 @router.callback_query(TransferKeyServer.filter(F.action == "select"), AdminUsers.transfer_all_keys_select_first)
 async def clb_select_first_server_transfer_all_keys(callback: CallbackQuery, callback_data: TransferKeyServer, state: FSMContext):
     servers = await get_servers()
-    for server in servers:
-        if server.id == int(callback_data.server_id):
-            servers.remove(server)
+    # Remove the selected server from the list
+    servers = [s for s in servers if s.id != int(callback_data.server_id)]
     await callback.answer()
     await callback.message.answer(
         text="Выберите сервер, на который будут перенесены все ключи:",

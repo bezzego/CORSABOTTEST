@@ -4,7 +4,11 @@ import uuid
 import requests
 import asyncio
 import urllib.parse
+import urllib3
 from requests.exceptions import InvalidURL, RequestException
+
+# Disable SSL warnings for self-signed certificates
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from src.config import settings
 from src.database.crud.keys import get_all_keys, update_key, delete_key
@@ -51,6 +55,9 @@ class X3UI:
 
     def _request(self, method: str, path: str, **kwargs):
         url = self._build_url(path)
+        # Disable SSL verification for self-signed certificates
+        # WARNING: This is a security risk in production. Use only for internal servers.
+        kwargs.setdefault('verify', False)
         try:
             return getattr(self.ses, method)(url, **kwargs)
         except InvalidURL:
