@@ -99,8 +99,6 @@ class X3UI:
                 "{\"clients\":"
                 "[{\"id\":\"" + str(uuid.uuid1()) + "\","
                                                     "\"alterId\":90,\"email\":\"" + str(key_name) + "\","
-                                                    "\"flow\":\"xtls-rprx-vision\","                "\"flow\":\"xtls-rprx-vision\","
-                                                    "\"flow\":\"xtls-rprx-vision\","                "\"flow\":\"xtls-rprx-vision\","
                                                                                                     "\"limitIp\":1,\"totalGB\":0,"
                                                                                                     "\"expiryTime\":" + str(
                     x_time) + ",\"enable\":true,\"tgId\":\"" + str(key_name) + "\",\"subId\":\"\"}]}"
