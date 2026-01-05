@@ -67,8 +67,18 @@ async def process_pending_payment(bot, payment: PaymentsOrm):
             logger.error(f"Failed to process success payment {payment.label}: {e}", exc_info=True)
             # Платеж останется в статусе success, но без key_issued_at
             # Будет обработан в следующем цикле check_success_payments_without_key
+        return
 
-    elif payment.created_at < datetime.now() - timedelta(minutes=30):
+    # Всюду сравниваем в московском времени
+    created_at = payment.created_at
+    if created_at.tzinfo:
+        created_at_msk = created_at.astimezone(ZoneInfo("Europe/Moscow"))
+    else:
+        created_at_msk = created_at.replace(tzinfo=ZoneInfo("Europe/Moscow"))
+
+    now_msk = datetime.now(ZoneInfo("Europe/Moscow"))
+
+    if created_at_msk < now_msk - timedelta(minutes=30):
         await delete_expired_payment(payment)
         logger.debug(f"payment expired and deleted: {payment.label}")
     else:

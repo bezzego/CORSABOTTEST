@@ -95,19 +95,14 @@ class X3UI:
 
         data = {
             "id": self.inbound_id,
-            "settings": json.dumps({
-                "clients": [{
-                    "id": str(uuid.uuid1()),
-                    "alterId": 90,
-                    "email": str(key_name),
-                    "limitIp": 1,
-                    "totalGB": 0,
-                    "expiryTime": x_time,
-                    "enable": True,
-                    "tgId": str(key_name),
-                    "subId": ""
-                }]
-            })
+            "settings":
+                "{\"clients\":"
+                "[{\"id\":\"" + str(uuid.uuid1()) + "\","
+                                                    "\"alterId\":90,\"email\":\"" + str(key_name) + "\","
+                                                    "\"flow\":\"xtls-rprx-vision\","                "\"flow\":\"xtls-rprx-vision\","
+                                                                                                    "\"limitIp\":1,\"totalGB\":0,"
+                                                                                                    "\"expiryTime\":" + str(
+                    x_time) + ",\"enable\":true,\"tgId\":\"" + str(key_name) + "\",\"subId\":\"\"}]}"
         }
 
         self.auth()
@@ -249,14 +244,18 @@ async def keys_control_task(bot):
     await asyncio.sleep(20)
 
     while True:
-        now = datetime.datetime.now()
+        # Используем московское время и избавляемся от naive/aware конфликтов
+        msk = datetime.timezone(datetime.timedelta(hours=3))
+        now = datetime.datetime.now(msk)
         keys = await get_all_keys()
 
         for key in keys:
             try:
-                if key.finish >= now:
-                    ts = (key.finish - now).total_seconds()
-                    days, hours, _ = get_days_hours_by_ts(ts)
+                finish = key.finish.astimezone(msk) if key.finish.tzinfo else key.finish.replace(tzinfo=msk)
+
+                if finish >= now:
+                    ts = (finish - now).total_seconds()
+                    days, hours, minutes = get_days_hours_by_ts(ts)
                     hours += days * 60
 
                     if 1 <= hours <= 24 and not key.alerted:

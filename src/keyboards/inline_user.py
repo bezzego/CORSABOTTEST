@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from math import ceil
 from typing import Union
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -14,13 +14,15 @@ logger = getLogger(__name__)
 async def get_key_stats(key_id: int) -> str:
     """Возвращает статистику ключа ключа"""
     key = await get_key_by_id(key_id)
-    now = datetime.now()
-    if key.finish >= now:
-        ts = (key.finish - now).total_seconds()
+    now = datetime.now(timezone.utc)
+    finish = key.finish if key.finish.tzinfo else key.finish.replace(tzinfo=timezone.utc)
+
+    if finish >= now:
+        ts = (finish - now).total_seconds()
         days, hours, minutes = get_days_hours_by_ts(ts)
         return f"🔑{get_key_name_without_user_id(key)} Осталось: {days} дн. {hours} ч. {minutes} м."
 
-    ts = (now - key.finish).total_seconds()
+    ts = (now - finish).total_seconds()
     days, hours, minutes = get_days_hours_by_ts(ts)
     return f"🔑{get_key_name_without_user_id(key)} Истек: {days} дн. {hours} ч. {minutes} м. назад"
 
