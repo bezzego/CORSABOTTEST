@@ -271,8 +271,8 @@ async def keys_control_task(bot):
                         await update_key(key)
 
                 else:
-                    ts = (now - key.finish).total_seconds()
-                    days, hours, _ = get_days_hours_by_ts(ts)
+                    ts = (now - finish).total_seconds()
+                    days, hours, minutes = get_days_hours_by_ts(ts)
                     hours += days * 60
 
                     if hours >= 24:
