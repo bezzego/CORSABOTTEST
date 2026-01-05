@@ -6,6 +6,7 @@ from src.database.crud import change_test_sub, get_tariff
 from src.database.crud.keys import add_new_key, get_device_last_id, get_key_by_id, update_key, delete_key, \
     update_key_transfer, get_all_keys_server
 from src.database.crud.promo import activate_promo
+from src.database.crud.payments import is_key_issued, mark_key_issued
 from src.database.crud.servers import get_sorted_servers, get_server_by_id
 from src.database.models import TariffsOrm, ServersOrm, PaymentsOrm
 from src.keyboards.reply_user import get_start_menu
@@ -167,24 +168,57 @@ async def transfer_key_to_select_server(bot: Bot, key_id: int, server_id: int):
 
 
 async def process_success_payment(bot, payment: PaymentsOrm):
+    """
+    Обработка успешного платежа с выдачей ключа.
+    Идемпотентная функция - безопасна для повторных вызовов.
+    """
+    # Проверка идемпотентности: если ключ уже выдан, пропускаем обработку
+    if await is_key_issued(payment):
+        logger.info(f"Payment {payment.label} already processed, key already issued. Skipping.")
+        return
+
     promo = payment.promo
     key_id = payment.key_id
-    logger.debug(f"payment select: user_id: {payment.user_id} | label: {payment.label} | key_id: {key_id}")
-    tariff = await get_tariff(payment.tariff_id)
-    if not key_id:
-        await create_key(
-            bot=bot,
-            user_id=payment.user_id,
-            finish_date=datetime.now() + timedelta(days=tariff.days),
-            tariff_id=tariff.id,
-            device=payment.device,
-            is_test=False,
-            promo=promo)
+    logger.info(f"Processing payment: user_id={payment.user_id} | label={payment.label} | key_id={key_id}")
+    
+    try:
+        tariff = await get_tariff(payment.tariff_id)
+        if not tariff:
+            logger.error(f"Tariff {payment.tariff_id} not found for payment {payment.label}")
+            await send_admins_message(
+                bot=bot,
+                text=f"⚠️ Ошибка обработки платежа {payment.label}: тариф {payment.tariff_id} не найден"
+            )
+            return
 
-    elif key_id:
-        await prolong_key(
+        if not key_id:
+            # Создание нового ключа
+            await create_key(
+                bot=bot,
+                user_id=payment.user_id,
+                finish_date=datetime.now() + timedelta(days=tariff.days),
+                tariff_id=tariff.id,
+                device=payment.device,
+                is_test=False,
+                promo=promo)
+        else:
+            # Продление существующего ключа
+            await prolong_key(
+                bot=bot,
+                user_id=payment.user_id,
+                tariff=tariff,
+                key_id=key_id,
+                promo=promo)
+
+        # Помечаем платеж как обработанный только после успешной выдачи ключа
+        await mark_key_issued(payment.id)
+        logger.info(f"Payment {payment.label} successfully processed, key issued")
+        
+    except Exception as e:
+        logger.error(f"Error processing payment {payment.label}: {e}", exc_info=True)
+        await send_admins_message(
             bot=bot,
-            user_id=payment.user_id,
-            tariff=tariff,
-            key_id=key_id,
-            promo=promo)
+            text=f"⚠️ Ошибка при обработке платежа {payment.label} (user_id={payment.user_id}):\n\n{str(e)}"
+        )
+        # Не помечаем как обработанный при ошибке, чтобы можно было повторить попытку
+        raise

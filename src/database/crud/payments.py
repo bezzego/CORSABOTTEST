@@ -46,6 +46,44 @@ async def mark_payment_successful(payment: PaymentsOrm):
             if payment:
                 payment.status = PaymentStatus.success
                 payment.updated_at = datetime.now()
+            return payment
+
+
+async def mark_key_issued(payment_id: int):
+    """Помечает платеж как обработанный (ключ выдан)"""
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            payment = await session.get(PaymentsOrm, payment_id)
+            if payment:
+                payment.key_issued_at = datetime.now()
+                payment.updated_at = datetime.now()
+            return payment
+
+
+async def is_key_issued(payment: PaymentsOrm) -> bool:
+    """Проверяет, был ли уже выдан ключ для платежа"""
+    # Если у объекта уже есть key_issued_at, используем его
+    if hasattr(payment, 'key_issued_at') and payment.key_issued_at is not None:
+        return True
+    
+    # Иначе проверяем в базе данных
+    async with AsyncSessionLocal() as session:
+        result = await session.get(PaymentsOrm, payment.id)
+        if result:
+            return result.key_issued_at is not None
+        return False
+
+
+async def get_success_payments_without_key() -> list[PaymentsOrm]:
+    """Получение всех платежей в статусе success, для которых ключ еще не выдан"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(PaymentsOrm).where(
+                PaymentsOrm.status == PaymentStatus.success,
+                PaymentsOrm.key_issued_at.is_(None)
+            )
+        )
+        return result.scalars().all()
 
 
 async def delete_expired_payment(payment: PaymentsOrm):

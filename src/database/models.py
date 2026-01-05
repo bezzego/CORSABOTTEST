@@ -45,6 +45,7 @@ class PaymentsOrm(Base):
     key_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
     promo: Mapped[int] = mapped_column(BigInteger, nullable=True)
     device: Mapped[str] = mapped_column(Text, nullable=True)
+    key_issued_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), onupdate=func.now(), default=func.now())
 
