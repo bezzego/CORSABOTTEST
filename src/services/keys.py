@@ -99,7 +99,7 @@ class X3UI:
                 "{\"clients\":"
                 "[{\"id\":\"" + str(uuid.uuid1()) + "\","
                                                     "\"alterId\":90,\"email\":\"" + str(key_name) + "\","
-                                                                                                    "\"limitIp\":1,\"totalGB\":0,"
+                                                                                                    "\"flow\":\"xtls-rprx-vision\",\"limitIp\":1,\"totalGB\":0,"
                                                                                                     "\"expiryTime\":" + str(
                     x_time) + ",\"enable\":true,\"tgId\":\"" + str(key_name) + "\",\"subId\":\"\"}]}"
         }
@@ -149,6 +149,7 @@ class X3UI:
                     "id": user_id,
                     "alterId": 90,
                     "email": str(key_name),
+                    "flow": "xtls-rprx-vision",
                     "limitIp": 1,
                     "totalGB": 0,
                     "expiryTime": x_time,
@@ -180,6 +181,7 @@ class X3UI:
                     "id": user_id,
                     "alterId": 90,
                     "email": str(key_name),
+                    "flow": "xtls-rprx-vision",
                     "limitIp": 1,
                     "totalGB": 0,
                     "expiryTime": x_time,
