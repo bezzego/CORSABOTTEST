@@ -23,6 +23,10 @@ class X3UI:
     def __init__(self, server):
         self.server = server
         self.ses = requests.Session()
+        # Configure session to work with self-signed SSL certificates
+        self.ses.verify = False
+        # Set default timeout for requests
+        self.timeout = 30
         self.host = self._normalize_host(getattr(server, "host", None))
         self.login = server.login
         self.password = server.password
@@ -36,16 +40,21 @@ class X3UI:
             return None
 
         host = str(host).strip()
-        if not urllib.parse.urlparse(host).scheme:
-            host = "http://" + host
-
         parsed = urllib.parse.urlparse(host)
+        
+        # If no scheme provided, default to https for new X3UI panels with SSL
+        if not parsed.scheme:
+            host = "https://" + host
+            parsed = urllib.parse.urlparse(host)
+        
         if not parsed.netloc:
             logger.error(f"Invalid server host: {host}")
             return None
 
         path = parsed.path.rstrip("/") if parsed.path else ""
-        return f"{parsed.scheme}://{parsed.netloc}{path}"
+        normalized = f"{parsed.scheme}://{parsed.netloc}{path}"
+        logger.debug(f"Normalized host: {host} -> {normalized}")
+        return normalized
 
     def _build_url(self, path: str) -> str:
         if not self.host:
@@ -55,32 +64,54 @@ class X3UI:
 
     def _request(self, method: str, path: str, **kwargs):
         url = self._build_url(path)
-        # Disable SSL verification for self-signed certificates
-        # WARNING: This is a security risk in production. Use only for internal servers.
+        # Ensure SSL verification is disabled for self-signed certificates
         kwargs.setdefault('verify', False)
+        # Set timeout if not provided
+        kwargs.setdefault('timeout', self.timeout)
+        # Add headers if not provided
+        if 'headers' not in kwargs:
+            kwargs['headers'] = self.header.copy()
+        
         try:
-            return getattr(self.ses, method)(url, **kwargs)
-        except InvalidURL:
-            logger.error(f"InvalidURL {url}", exc_info=True)
+            logger.debug(f"Making {method.upper()} request to {url}")
+            response = getattr(self.ses, method)(url, **kwargs)
+            return response
+        except InvalidURL as e:
+            logger.error(f"InvalidURL for {url}: {e}", exc_info=True)
             raise
-        except RequestException:
-            logger.error(f"Request error {url}", exc_info=True)
+        except RequestException as e:
+            logger.error(f"Request error for {method.upper()} {url}: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error for {method.upper()} {url}: {e}", exc_info=True)
             raise
 
     def auth(self):
         try:
             response = self._request("post", "/login", json=self.data)
             if not response:
-                return {"success": False}
+                logger.warning("Auth: Empty response")
+                return {"success": False, "error": "Empty response"}
+
+            # Check status code
+            if response.status_code != 200:
+                logger.warning(f"Auth: HTTP {response.status_code} - {response.text[:200]}")
+                return {"success": False, "error": f"HTTP {response.status_code}"}
 
             if response.text:
                 try:
-                    return response.json()
-                except ValueError:
-                    return {"success": False}
+                    json_resp = response.json()
+                    logger.debug(f"Auth response: {json_resp}")
+                    return json_resp
+                except ValueError as e:
+                    logger.warning(f"Auth: Failed to parse JSON - {response.text[:200]}")
+                    # Some panels return success even without JSON
+                    if response.status_code == 200:
+                        return {"success": True}
+                    return {"success": False, "error": "Invalid JSON response"}
             return {"success": True}
         except Exception as e:
-            logger.error("Auth error", exc_info=True)
+            logger.error(f"Auth error for host {self.host}: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
     def users_list(self):
