@@ -37,14 +37,25 @@ async def check_pending_payments(bot):
 
 
 async def check_success_payments_without_key(bot):
-    """Проверка и обработка платежей в статусе success, для которых ключ еще не выдан (восстановление)"""
-    payments = await get_success_payments_without_key()
+    """
+    Проверка и обработка платежей в статусе success, для которых ключ еще не выдан (восстановление).
+    
+    ЗАДАЧА 4: Ограничение recovery
+    - Обрабатывает максимум 5 платежей за запуск
+    - Только платежи не старше 30 дней
+    - Предотвращает массовую повторную выдачу ключей
+    """
+    # ЗАДАЧА 4: Лимиты для предотвращения массовой повторной выдачи
+    payments = await get_success_payments_without_key(limit=5, days_cutoff=30)
     if payments:
-        logger.warning(f"Found {len(payments)} success payments without issued key. Processing recovery...")
+        logger.warning(f"Found {len(payments)} success payments without issued key. Processing recovery (limited to 5 per run, max 30 days old)...")
+    else:
+        logger.debug("No payments found for recovery")
+        return
     
     for payment in payments:
         try:
-            logger.info(f"Recovering payment {payment.label} (user_id={payment.user_id})")
+            logger.info(f"Recovering payment {payment.label} (user_id={payment.user_id}, created_at={payment.created_at})")
             await process_success_payment(bot, payment)
             await asyncio.sleep(0.3)
         except Exception as e:

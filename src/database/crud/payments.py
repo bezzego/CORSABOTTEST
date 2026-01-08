@@ -64,7 +64,10 @@ async def mark_payment_as_error(payment_id: int, reason: str = None):
 
 
 async def mark_key_issued(payment_id: int, key_id: int = None):
-    """Помечает платеж как обработанный (ключ выдан)"""
+    """
+    Помечает платеж как обработанный (ключ выдан).
+    ЗАДАЧА 3: Атомарная операция - обновление payment только после успешного создания ключа.
+    """
     async with AsyncSessionLocal() as session:
         async with session.begin():
             payment = await session.get(PaymentsOrm, payment_id)
@@ -74,6 +77,8 @@ async def mark_key_issued(payment_id: int, key_id: int = None):
                     payment.key_id = key_id
                 payment.updated_at = datetime.now(ZoneInfo("Europe/Moscow"))
             return payment
+
+
 
 
 async def is_key_issued(payment: PaymentsOrm) -> bool:
@@ -90,14 +95,31 @@ async def is_key_issued(payment: PaymentsOrm) -> bool:
         return False
 
 
-async def get_success_payments_without_key() -> list[PaymentsOrm]:
-    """Получение всех платежей в статусе success, для которых ключ еще не выдан"""
+async def get_success_payments_without_key(limit: int = 5, days_cutoff: int = 30) -> list[PaymentsOrm]:
+    """
+    Получение платежей в статусе success, для которых ключ еще не выдан.
+    
+    ЗАДАЧА 4: Ограничение recovery
+    - limit: максимальное количество платежей за запуск (по умолчанию 5)
+    - days_cutoff: обрабатывать только платежи не старше N дней (по умолчанию 30)
+    - Старые платежи игнорируются для предотвращения массовой повторной выдачи
+    """
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    
+    cutoff_date = datetime.now(ZoneInfo("Europe/Moscow")) - timedelta(days=days_cutoff)
+    
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(PaymentsOrm).where(
+            select(PaymentsOrm)
+            .where(
                 PaymentsOrm.status == PaymentStatus.success,
-                PaymentsOrm.key_issued_at.is_(None)
+                PaymentsOrm.key_issued_at.is_(None),
+                PaymentsOrm.key_id.is_(None),  # ЗАДАЧА 1: Не обрабатываем платежи с уже установленным key_id
+                PaymentsOrm.created_at >= cutoff_date  # ЗАДАЧА 4: Только недавние платежи
             )
+            .order_by(PaymentsOrm.created_at.desc())  # Сначала новые
+            .limit(limit)
         )
         return result.scalars().all()
 

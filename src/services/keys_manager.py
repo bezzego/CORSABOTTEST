@@ -3,7 +3,7 @@ from functools import wraps
 from aiogram import Bot
 from aiogram.enums import ParseMode
 from src.database.crud import change_test_sub, get_tariff
-from src.database.crud.keys import add_new_key, get_device_last_id, get_key_by_id, update_key, delete_key, \
+from src.database.crud.keys import add_new_key, get_device_last_id, get_key_by_id, get_key_by_payment_id, update_key, delete_key, \
     update_key_transfer, get_all_keys_server
 from src.database.crud.promo import activate_promo
 from src.database.crud.payments import is_key_issued, mark_key_issued, mark_payment_as_error
@@ -185,10 +185,28 @@ async def process_success_payment(bot, payment: PaymentsOrm):
     Обработка успешного платежа с выдачей ключа.
     Идемпотентная функция - безопасна для повторных вызовов.
     Атомарная операция: ключ создается, payment.key_id обновляется, только потом success.
+    
+    ЗАДАЧА 1: Жёсткая проверка идемпотентности
+    - Если key_id уже установлен → выходим
+    - Если ключ найден по payment_id → выходим
+    - Recovery не имеет права создавать второй ключ для одного платежа
     """
-    # Проверка идемпотентности: если ключ уже выдан, пропускаем обработку
+    # ЗАДАЧА 1: Жёсткая проверка идемпотентности - проверяем key_id ПЕРВЫМ
+    if payment.key_id is not None:
+        logger.info(f"Payment {payment.label} already has key_id={payment.key_id}. Skipping recovery.")
+        return
+    
+    # ЗАДАЧА 2: Проверяем существование ключа по payment_id (правило 1 платеж → 1 ключ)
+    existing_key = await get_key_by_payment_id(payment.id)
+    if existing_key:
+        logger.warning(f"Payment {payment.label} already has key with payment_id (key_id={existing_key.id}). Updating payment.key_id and skipping recovery.")
+        # Синхронизируем payment.key_id с существующим ключом
+        await mark_key_issued(payment.id, key_id=existing_key.id)
+        return
+    
+    # Дополнительная проверка через key_issued_at
     if await is_key_issued(payment):
-        logger.info(f"Payment {payment.label} already processed, key already issued. Skipping.")
+        logger.info(f"Payment {payment.label} already processed (key_issued_at set). Skipping.")
         return
 
     promo = payment.promo

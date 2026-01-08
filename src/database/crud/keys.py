@@ -88,6 +88,15 @@ async def get_key_by_id(pk_id: int) -> KeysOrm | None:
         return None
 
 
+async def get_key_by_payment_id(payment_id: int) -> KeysOrm | None:
+    """Получение ключа по payment_id. Гарантирует правило 1 платеж → 1 ключ."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(KeysOrm).where(KeysOrm.payment_id == payment_id)
+        )
+        return result.scalar_one_or_none()
+
+
 async def get_all_keys_server(server_id: int) -> list[KeysOrm]:
     """Получение всех ключей сервера."""
     async with AsyncSessionLocal() as session:
