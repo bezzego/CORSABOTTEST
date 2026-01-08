@@ -54,6 +54,8 @@ async def create_key(bot: Bot, user_id: int, finish_date: datetime, tariff_id: i
     await send_notification_to_user(bot, user_id, "Идет выпуск ключа. Ожидание займет 1 минуту.")
 
     user = await change_test_sub(user_id, True)
+    # Устанавливаем значение по умолчанию, если device не указан
+    device = device or "unknown"
     device_id = await get_device_last_id(user_id, device)
     name = f'{settings.prefix}_{user_id}_{device}_{device_id}'
 
