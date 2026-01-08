@@ -3,6 +3,7 @@ from sqlalchemy import select
 from src.database.database import AsyncSessionLocal
 from src.database.models import PaymentsOrm, PaymentStatus
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 logger = getLogger(__name__)
 
@@ -55,8 +56,8 @@ async def mark_key_issued(payment_id: int):
         async with session.begin():
             payment = await session.get(PaymentsOrm, payment_id)
             if payment:
-                payment.key_issued_at = datetime.now()
-                payment.updated_at = datetime.now()
+                payment.key_issued_at = datetime.now(ZoneInfo("Europe/Moscow"))
+                payment.updated_at = datetime.now(ZoneInfo("Europe/Moscow"))
             return payment
 
 
