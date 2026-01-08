@@ -34,6 +34,7 @@ async def add_new_key(
     finish: datetime,
     name: str,
     is_test: bool,
+    payment_id: int = None,
 ):
     """Создание ключа в БД и синхронизация уведомлений по правилам A–D."""
     async with AsyncSessionLocal() as session:
@@ -43,6 +44,7 @@ async def add_new_key(
                 server_id=server_id,
                 key=key,
                 device=device,
+                payment_id=payment_id,
                 start=datetime.now(),
                 finish=finish,
                 name=name,

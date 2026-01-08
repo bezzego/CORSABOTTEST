@@ -50,13 +50,28 @@ async def mark_payment_successful(payment: PaymentsOrm):
             return payment
 
 
-async def mark_key_issued(payment_id: int):
+async def mark_payment_as_error(payment_id: int, reason: str = None):
+    """Помечает платеж как error (не может быть обработан, recovery не должен повторять)"""
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            payment = await session.get(PaymentsOrm, payment_id)
+            if payment:
+                payment.status = PaymentStatus.error
+                payment.updated_at = datetime.now(ZoneInfo("Europe/Moscow"))
+                if reason:
+                    logger.warning(f"Payment {payment.label} marked as error: {reason}")
+            return payment
+
+
+async def mark_key_issued(payment_id: int, key_id: int = None):
     """Помечает платеж как обработанный (ключ выдан)"""
     async with AsyncSessionLocal() as session:
         async with session.begin():
             payment = await session.get(PaymentsOrm, payment_id)
             if payment:
                 payment.key_issued_at = datetime.now(ZoneInfo("Europe/Moscow"))
+                if key_id:
+                    payment.key_id = key_id
                 payment.updated_at = datetime.now(ZoneInfo("Europe/Moscow"))
             return payment
 

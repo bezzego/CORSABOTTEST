@@ -30,6 +30,7 @@ class PaymentStatus(str, Enum):
     pending = "pending"
     success = "success"
     failed = "failed"
+    error = "error"  # Платеж с ошибкой, который не может быть обработан (например, тариф не найден)
 
 
 class PaymentsOrm(Base):
@@ -134,6 +135,7 @@ class KeysOrm(Base):
     server_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     key: Mapped[str] = mapped_column(String, nullable=False)
     device: Mapped[str] = mapped_column(String, nullable=False)
+    payment_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # Связь с платежом
     active: Mapped[bool] = mapped_column(Boolean, nullable=True, default=True)
     alerted: Mapped[bool] = mapped_column(Boolean, nullable=True, default=False)
     start: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)

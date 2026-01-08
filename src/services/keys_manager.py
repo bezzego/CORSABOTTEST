@@ -6,7 +6,7 @@ from src.database.crud import change_test_sub, get_tariff
 from src.database.crud.keys import add_new_key, get_device_last_id, get_key_by_id, update_key, delete_key, \
     update_key_transfer, get_all_keys_server
 from src.database.crud.promo import activate_promo
-from src.database.crud.payments import is_key_issued, mark_key_issued
+from src.database.crud.payments import is_key_issued, mark_key_issued, mark_payment_as_error
 from src.database.crud.servers import get_sorted_servers, get_server_by_id
 from src.database.models import TariffsOrm, ServersOrm, PaymentsOrm
 from src.keyboards.reply_user import get_start_menu
@@ -36,7 +36,7 @@ def create_key_dec(func):
 
 
 @create_key_dec
-async def create_key(bot: Bot, user_id: int, finish_date: datetime, tariff_id: int = None, device: str = None, is_test: bool = False, promo = None):
+async def create_key(bot: Bot, user_id: int, finish_date: datetime, tariff_id: int = None, device: str = None, is_test: bool = False, promo = None, payment_id: int = None):
     """Создание ключа на сервере"""
     servers = await get_sorted_servers(is_test)
     server, used_slots = servers[0]
@@ -72,7 +72,8 @@ async def create_key(bot: Bot, user_id: int, finish_date: datetime, tariff_id: i
         device=device,
         finish=finish_date,
         name=name,
-        is_test=is_test)
+        is_test=is_test,
+        payment_id=payment_id)
 
     await send_notification_to_user(bot, user_id, f"Ключ 🔑{settings.prefix}_{device}{device_id} создан:")
     await send_notification_to_user(bot, user_id, key)
@@ -84,6 +85,8 @@ async def create_key(bot: Bot, user_id: int, finish_date: datetime, tariff_id: i
     else:
         await notification_service.on_paid_key_created(user_id, new_key.finish)
     logger.info(f"Был создан новый ключ: {new_key}\nХост: {server.host}\nМаксимум слотов: {server.max_users}\nЗанято: {int(used_slots) + 1}")
+    
+    return new_key  # Возвращаем созданный ключ для атомарной обработки
 
 
 async def prolong_key(bot: Bot, user_id: int, tariff: TariffsOrm, key_id: int, _admin_days: int = None, promo=None):
@@ -181,6 +184,7 @@ async def process_success_payment(bot, payment: PaymentsOrm):
     """
     Обработка успешного платежа с выдачей ключа.
     Идемпотентная функция - безопасна для повторных вызовов.
+    Атомарная операция: ключ создается, payment.key_id обновляется, только потом success.
     """
     # Проверка идемпотентности: если ключ уже выдан, пропускаем обработку
     if await is_key_issued(payment):
@@ -192,26 +196,34 @@ async def process_success_payment(bot, payment: PaymentsOrm):
     logger.info(f"Processing payment: user_id={payment.user_id} | label={payment.label} | key_id={key_id}")
     
     try:
+        # ЗАДАЧА 1: Проверка тарифа - если не найден, помечаем как error и останавливаем recovery
         tariff = await get_tariff(payment.tariff_id)
         if not tariff:
+            error_msg = f"Тариф {payment.tariff_id} не найден в базе данных"
             logger.error(f"Tariff {payment.tariff_id} not found for payment {payment.label} (user_id={payment.user_id})")
+            await mark_payment_as_error(payment.id, error_msg)
             await send_admins_message(
                 bot=bot,
-                text=f"⚠️ Ошибка обработки платежа {payment.label} (user_id={payment.user_id}): тариф {payment.tariff_id} не найден в базе данных. Пожалуйста, проверьте наличие тарифа."
+                text=f"⚠️ Платеж {payment.label} (user_id={payment.user_id}) помечен как ERROR:\n{error_msg}\n\nRecovery больше не будет пытаться обработать этот платеж."
             )
-            # Не помечаем как обработанный, чтобы можно было исправить и повторить
-            return
+            return  # Выходим, не повторяем recovery
 
+        # ЗАДАЧА 2: Гарантируем device
+        device = payment.device or "unknown"
+        
+        created_key = None
+        
         if not key_id:
             # Создание нового ключа
-            await create_key(
+            created_key = await create_key(
                 bot=bot,
                 user_id=payment.user_id,
                 finish_date=datetime.now() + timedelta(days=tariff.days),
                 tariff_id=tariff.id,
-                device=payment.device,
+                device=device,
                 is_test=False,
-                promo=promo)
+                promo=promo,
+                payment_id=payment.id)  # Связываем ключ с платежом
         else:
             # Продление существующего ключа
             # Проверяем, что ключ существует перед попыткой продления
@@ -223,14 +235,15 @@ async def process_success_payment(bot, payment: PaymentsOrm):
                     text=f"⚠️ Ключ {key_id} не найден для платежа {payment.label} (user_id={payment.user_id}). Создается новый ключ."
                 )
                 # Создаем новый ключ вместо продления несуществующего
-                await create_key(
+                created_key = await create_key(
                     bot=bot,
                     user_id=payment.user_id,
                     finish_date=datetime.now() + timedelta(days=tariff.days),
                     tariff_id=tariff.id,
-                    device=payment.device,
+                    device=device,
                     is_test=False,
-                    promo=promo)
+                    promo=promo,
+                    payment_id=payment.id)  # Связываем ключ с платежом
             else:
                 await prolong_key(
                     bot=bot,
@@ -238,10 +251,15 @@ async def process_success_payment(bot, payment: PaymentsOrm):
                     tariff=tariff,
                     key_id=key_id,
                     promo=promo)
+                created_key = key
 
-        # Помечаем платеж как обработанный только после успешной выдачи ключа
-        await mark_key_issued(payment.id)
-        logger.info(f"Payment {payment.label} successfully processed, key issued")
+        # ЗАДАЧА 3: Атомарная операция - только после успешного создания ключа
+        # Обновляем payment.key_id и помечаем как обработанный
+        if created_key:
+            await mark_key_issued(payment.id, key_id=created_key.id)
+            logger.info(f"Payment {payment.label} successfully processed, key issued (key_id={created_key.id})")
+        else:
+            raise RuntimeError("Key was not created but no exception was raised")
         
     except Exception as e:
         logger.error(f"Error processing payment {payment.label}: {e}", exc_info=True)
