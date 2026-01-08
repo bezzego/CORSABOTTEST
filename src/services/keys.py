@@ -245,9 +245,11 @@ class X3UI:
         stream = json.loads(inbound.get("streamSettings", "{}"))
 
         key_id = None
+        flow = None
         for c in settings_data.get("clients", []):
             if str(c.get("email")) == key_name:
                 key_id = c.get("id")
+                flow = c.get("flow")  # Получаем flow из настроек клиента
                 break
 
         if not key_id:
@@ -258,15 +260,26 @@ class X3UI:
         port = inbound.get("port")
 
         try:
-            return (
+            # Формируем базовый URL
+            url = (
                 f"vless://{key_id}@{ip}:{port}"
                 f"?type={stream.get('network')}&security={stream.get('security')}"
+            )
+            
+            # Добавляем flow, если он есть
+            if flow:
+                url += f"&flow={flow}"
+            
+            # Добавляем остальные параметры
+            url += (
                 f"&fp=chrome"
                 f"&pbk={stream['realitySettings']['settings']['publicKey']}"
                 f"&sni={stream['realitySettings']['serverNames'][0]}"
                 f"&sid={stream['realitySettings']['shortIds'][0]}"
                 f"&spx=%2F#{settings.prefix}-{key_name}"
             )
+            
+            return url
         except Exception:
             logger.error("get_key failed", exc_info=True)
             return None
