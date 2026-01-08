@@ -155,32 +155,73 @@ async def get_text_promo(message: Message, state: FSMContext):
 
 @router.callback_query(Tariffs.filter(F.action == "buy_tariff"), TariffState.buy_tariff)
 async def clb_get_access_buy_tariff(callback: CallbackQuery, callback_data: Tariffs, state: FSMContext):
-    await callback.answer()
+    try:
+        await callback.answer()
 
-    state_data = await state.get_data()
-    tariff = state_data.get("tariff_obj")
-    promo: PromoOrm = state_data.get("promo")
-    logger.debug(f"clb_get_access_buy_tariff: tariff: {tariff} | data: {callback.data}")
-    price = tariff.price if not promo else int((tariff.price / 100) * (100 - promo.price))
-    discount = "" if not promo else f" <b>({tariff.price}₽ - {promo.price}% скидка)</b>"
-    key_id = callback_data.key_id
-    pay_url, label = await create_payment(
-        tariff=tariff,
-        price=price,
-        user_id=callback.from_user.id,
-        device=callback_data.device,
-        key_id=key_id,
-        promo=promo.id if promo else None)
+        state_data = await state.get_data()
+        tariff = state_data.get("tariff_obj")
+        
+        if not tariff:
+            logger.error(f"clb_get_access_buy_tariff: tariff is None for user {callback.from_user.id}")
+            await callback.message.answer(
+                "⚠️ Произошла ошибка при обработке запроса. Пожалуйста, попробуйте выбрать тариф заново.",
+                parse_mode=ParseMode.HTML
+            )
+            await state.clear()
+            return
 
-    await update_inline_reply_markup(callback, edit_inline_markup_add_symbol, 0)
+        promo: PromoOrm = state_data.get("promo")
+        logger.debug(f"clb_get_access_buy_tariff: tariff: {tariff} | device: {callback_data.device} | key_id: {callback_data.key_id} | data: {callback.data}")
+        
+        if not callback_data.device:
+            logger.error(f"clb_get_access_buy_tariff: device is None for user {callback.from_user.id}")
+            await callback.message.answer(
+                "⚠️ Не выбран тип устройства. Пожалуйста, выберите устройство и попробуйте снова.",
+                parse_mode=ParseMode.HTML
+            )
+            await state.clear()
+            return
 
-    text = f"🚀 <b>Тариф «{tariff.name}»</b>\n\nК оплате: <b>{price}₽{discount}</b>\n\n✅ Чтобы перейти на сайт платежной системы, нажмите ниже на кнопку.\n\n📌<b> После оплаты активация произойдёт автоматически.</b>"
-    await callback.message.answer(
-        text=text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_payments_buttons(callback_data, pay_url))
+        price = tariff.price if not promo else int((tariff.price / 100) * (100 - promo.price))
+        discount = "" if not promo else f" <b>({tariff.price}₽ - {promo.price}% скидка)</b>"
+        key_id = callback_data.key_id
+        
+        try:
+            pay_url, label = await create_payment(
+                tariff=tariff,
+                price=price,
+                user_id=callback.from_user.id,
+                device=callback_data.device,
+                key_id=key_id,
+                promo=promo.id if promo else None)
+        except Exception as e:
+            logger.error(f"clb_get_access_buy_tariff: Error creating payment: {e}", exc_info=True)
+            await callback.message.answer(
+                "⚠️ Произошла ошибка при создании платежа. Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+                parse_mode=ParseMode.HTML
+            )
+            await state.clear()
+            return
 
-    await state.clear()
+        await update_inline_reply_markup(callback, edit_inline_markup_add_symbol, 0)
+
+        text = f"🚀 <b>Тариф «{tariff.name}»</b>\n\nК оплате: <b>{price}₽{discount}</b>\n\n✅ Чтобы перейти на сайт платежной системы, нажмите ниже на кнопку.\n\n📌<b> После оплаты активация произойдёт автоматически.</b>"
+        await callback.message.answer(
+            text=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_payments_buttons(callback_data, pay_url))
+
+        await state.clear()
+    except Exception as e:
+        logger.error(f"clb_get_access_buy_tariff: Unexpected error: {e}", exc_info=True)
+        try:
+            await callback.message.answer(
+                "⚠️ Произошла непредвиденная ошибка. Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+                parse_mode=ParseMode.HTML
+            )
+        except:
+            pass
+        await state.clear()
 
 
 @router.callback_query(Tariffs.filter(F.action == "cancel_payment"))
