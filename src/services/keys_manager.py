@@ -86,11 +86,19 @@ async def create_key(bot: Bot, user_id: int, finish_date: datetime, tariff_id: i
 
 async def prolong_key(bot: Bot, user_id: int, tariff: TariffsOrm, key_id: int, _admin_days: int = None, promo=None):
     key = await get_key_by_id(key_id)
-    server = await get_server_by_id(key.server_id)
-    if not key or not server:
+    if not key:
+        logger.error(f"Key {key_id} not found for prolongation (user_id={user_id})")
         await bot.send_message(
             chat_id=user_id,
-            text="⚠️ Не было найдено ключа или сервера, обратитесь в поддержку")
+            text="⚠️ Не было найдено ключа, обратитесь в поддержку")
+        return
+    
+    server = await get_server_by_id(key.server_id)
+    if not server:
+        logger.error(f"Server {key.server_id} not found for key {key_id} (user_id={user_id})")
+        await bot.send_message(
+            chat_id=user_id,
+            text="⚠️ Не было найдено сервера, обратитесь в поддержку")
         return
     add_days = tariff.days if tariff else _admin_days
     key.finish = max(key.finish, datetime.now()) + timedelta(days=add_days)
@@ -184,11 +192,12 @@ async def process_success_payment(bot, payment: PaymentsOrm):
     try:
         tariff = await get_tariff(payment.tariff_id)
         if not tariff:
-            logger.error(f"Tariff {payment.tariff_id} not found for payment {payment.label}")
+            logger.error(f"Tariff {payment.tariff_id} not found for payment {payment.label} (user_id={payment.user_id})")
             await send_admins_message(
                 bot=bot,
-                text=f"⚠️ Ошибка обработки платежа {payment.label}: тариф {payment.tariff_id} не найден"
+                text=f"⚠️ Ошибка обработки платежа {payment.label} (user_id={payment.user_id}): тариф {payment.tariff_id} не найден в базе данных. Пожалуйста, проверьте наличие тарифа."
             )
+            # Не помечаем как обработанный, чтобы можно было исправить и повторить
             return
 
         if not key_id:
@@ -203,12 +212,30 @@ async def process_success_payment(bot, payment: PaymentsOrm):
                 promo=promo)
         else:
             # Продление существующего ключа
-            await prolong_key(
-                bot=bot,
-                user_id=payment.user_id,
-                tariff=tariff,
-                key_id=key_id,
-                promo=promo)
+            # Проверяем, что ключ существует перед попыткой продления
+            key = await get_key_by_id(key_id)
+            if not key:
+                logger.error(f"Key {key_id} not found for payment {payment.label} (user_id={payment.user_id}). Creating new key instead.")
+                await send_admins_message(
+                    bot=bot,
+                    text=f"⚠️ Ключ {key_id} не найден для платежа {payment.label} (user_id={payment.user_id}). Создается новый ключ."
+                )
+                # Создаем новый ключ вместо продления несуществующего
+                await create_key(
+                    bot=bot,
+                    user_id=payment.user_id,
+                    finish_date=datetime.now() + timedelta(days=tariff.days),
+                    tariff_id=tariff.id,
+                    device=payment.device,
+                    is_test=False,
+                    promo=promo)
+            else:
+                await prolong_key(
+                    bot=bot,
+                    user_id=payment.user_id,
+                    tariff=tariff,
+                    key_id=key_id,
+                    promo=promo)
 
         # Помечаем платеж как обработанный только после успешной выдачи ключа
         await mark_key_issued(payment.id)
