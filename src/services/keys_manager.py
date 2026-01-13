@@ -186,27 +186,46 @@ async def process_success_payment(bot, payment: PaymentsOrm):
     Идемпотентная функция - безопасна для повторных вызовов.
     Атомарная операция: ключ создается, payment.key_id обновляется, только потом success.
     
-    ЗАДАЧА 1: Жёсткая проверка идемпотентности
-    - Если key_id уже установлен → выходим
-    - Если ключ найден по payment_id → выходим
-    - Recovery не имеет права создавать второй ключ для одного платежа
+    ИСПРАВЛЕНИЕ: Если у платежа есть key_id, но нет key_issued_at, проверяем и переотправляем ключ.
     """
-    # ЗАДАЧА 1: Жёсткая проверка идемпотентности - проверяем key_id ПЕРВЫМ
-    if payment.key_id is not None:
-        logger.info(f"Payment {payment.label} already has key_id={payment.key_id}. Skipping recovery.")
-        return
-    
-    # ЗАДАЧА 2: Проверяем существование ключа по payment_id (правило 1 платеж → 1 ключ)
-    existing_key = await get_key_by_payment_id(payment.id)
-    if existing_key:
-        logger.warning(f"Payment {payment.label} already has key with payment_id (key_id={existing_key.id}). Updating payment.key_id and skipping recovery.")
-        # Синхронизируем payment.key_id с существующим ключом
-        await mark_key_issued(payment.id, key_id=existing_key.id)
-        return
-    
-    # Дополнительная проверка через key_issued_at
+    # Проверяем, был ли ключ уже выдан (key_issued_at установлен)
     if await is_key_issued(payment):
         logger.info(f"Payment {payment.label} already processed (key_issued_at set). Skipping.")
+        return
+    
+    # Если у платежа есть key_id, но нет key_issued_at - ключ был создан, но не отправлен
+    # Необходимо переотправить ключ пользователю
+    if payment.key_id is not None:
+        logger.warning(f"Payment {payment.label} has key_id={payment.key_id} but key_issued_at is not set. Resending key to user.")
+        try:
+            key = await get_key_by_id(payment.key_id)
+            if key:
+                # Переотправляем ключ пользователю
+                await send_notification_to_user(bot, payment.user_id, f"Ключ 🔑{get_key_name_without_user_id(key)}:")
+                await send_notification_to_user(bot, payment.user_id, key.key)
+                # Помечаем как обработанный
+                await mark_key_issued(payment.id, key_id=payment.key_id)
+                logger.info(f"Key {payment.key_id} resent to user {payment.user_id} for payment {payment.label}")
+                return
+            else:
+                logger.error(f"Key {payment.key_id} not found for payment {payment.label}. Will create new key.")
+                # Ключ не найден, создадим новый ниже
+        except Exception as e:
+            logger.error(f"Error resending key {payment.key_id} for payment {payment.label}: {e}", exc_info=True)
+            # Продолжаем обработку, чтобы создать новый ключ
+    
+    # Проверяем существование ключа по payment_id (правило 1 платеж → 1 ключ)
+    existing_key = await get_key_by_payment_id(payment.id)
+    if existing_key:
+        logger.warning(f"Payment {payment.label} already has key with payment_id (key_id={existing_key.id}). Updating payment.key_id and resending key.")
+        # Синхронизируем payment.key_id с существующим ключом
+        # Переотправляем ключ, если он не был отправлен ранее
+        try:
+            await send_notification_to_user(bot, payment.user_id, f"Ключ 🔑{get_key_name_without_user_id(existing_key)}:")
+            await send_notification_to_user(bot, payment.user_id, existing_key.key)
+        except Exception as e:
+            logger.error(f"Error resending existing key {existing_key.id} for payment {payment.label}: {e}", exc_info=True)
+        await mark_key_issued(payment.id, key_id=existing_key.id)
         return
 
     promo = payment.promo

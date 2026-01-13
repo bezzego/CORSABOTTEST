@@ -41,7 +41,7 @@ async def check_payment(label: str):
             if operation.status == "success":
                 return True
 
-        logger.debug(f"Payment not found: l: {label}")
+        logger.warning(f"Payment not found in operation-history: l: {label}")
         return False
     except Exception as e:
         logger.error(f"Error checking payment {label}: {e}", exc_info=True)

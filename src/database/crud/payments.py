@@ -99,7 +99,9 @@ async def get_success_payments_without_key(limit: int = 5, days_cutoff: int = 30
     """
     Получение платежей в статусе success, для которых ключ еще не выдан.
     
-    ЗАДАЧА 4: Ограничение recovery
+    ИСПРАВЛЕНИЕ: Включаем платежи с key_id, но без key_issued_at (ключ создан, но не отправлен).
+    
+    Ограничение recovery:
     - limit: максимальное количество платежей за запуск (по умолчанию 5)
     - days_cutoff: обрабатывать только платежи не старше N дней (по умолчанию 30)
     - Старые платежи игнорируются для предотвращения массовой повторной выдачи
@@ -114,9 +116,9 @@ async def get_success_payments_without_key(limit: int = 5, days_cutoff: int = 30
             select(PaymentsOrm)
             .where(
                 PaymentsOrm.status == PaymentStatus.success,
-                PaymentsOrm.key_issued_at.is_(None),
-                PaymentsOrm.key_id.is_(None),  # ЗАДАЧА 1: Не обрабатываем платежи с уже установленным key_id
-                PaymentsOrm.created_at >= cutoff_date  # ЗАДАЧА 4: Только недавние платежи
+                PaymentsOrm.key_issued_at.is_(None),  # Ключ не был отправлен
+                # Убрали фильтр key_id.is_(None) - теперь обрабатываем платежи с key_id, но без key_issued_at
+                PaymentsOrm.created_at >= cutoff_date  # Только недавние платежи
             )
             .order_by(PaymentsOrm.created_at.desc())  # Сначала новые
             .limit(limit)

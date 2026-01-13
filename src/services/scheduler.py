@@ -67,7 +67,7 @@ async def process_pending_payment(bot, payment: PaymentsOrm):
     logger.debug(f"process pending_payment: {payment}")
     is_payment_success = await check_payment(payment.label)
     if is_payment_success:
-        # Помечаем платеж как успешный
+        # Помечаем платеж как успешный только при явном успешном ответе от YooMoney
         await mark_payment_successful(payment)
         logger.info(f"Payment confirmed: {payment.label}")
         
@@ -80,6 +80,9 @@ async def process_pending_payment(bot, payment: PaymentsOrm):
             # Будет обработан в следующем цикле check_success_payments_without_key
         return
 
+    # Если платёж не найден в YooMoney, НЕ помечаем его как успешный
+    # Платёж остаётся в статусе pending до явного подтверждения от YooMoney
+    
     # Всюду сравниваем в московском времени
     created_at = payment.created_at
     if created_at.tzinfo:
@@ -89,20 +92,7 @@ async def process_pending_payment(bot, payment: PaymentsOrm):
 
     now_msk = datetime.now(ZoneInfo("Europe/Moscow"))
 
-    if created_at_msk < now_msk - timedelta(minutes=30):
-        logger.debug(f"payment confirmed: {payment.label}")
-        await process_success_payment(bot, payment)
-        return
-
-    # Всюду сравниваем в московском времени
-    created_at = payment.created_at
-    if created_at.tzinfo:
-        created_at_msk = created_at.astimezone(ZoneInfo("Europe/Moscow"))
-    else:
-        created_at_msk = created_at.replace(tzinfo=ZoneInfo("Europe/Moscow"))
-
-    now_msk = datetime.now(ZoneInfo("Europe/Moscow"))
-
+    # Удаляем только очень старые pending платежи (старше 30 минут), но НЕ помечаем их как успешные
     if created_at_msk < now_msk - timedelta(minutes=30):
         await delete_expired_payment(payment)
         logger.debug(f"payment expired and deleted: {payment.label}")
