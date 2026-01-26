@@ -117,6 +117,9 @@ async def prolong_key(bot: Bot, user_id: int, tariff: TariffsOrm, key_id: int, _
             text="⚠️ Не было найдено сервера, обратитесь в поддержку")
         raise ValueError(error_msg)
     
+    # Сохраняем старое значение finish для проверки, было ли продление
+    old_finish = key.finish
+    
     try:
         add_days = tariff.days if tariff else _admin_days
         key.finish = max(key.finish, datetime.now()) + timedelta(days=add_days)
@@ -138,18 +141,36 @@ async def prolong_key(bot: Bot, user_id: int, tariff: TariffsOrm, key_id: int, _
         x3_class.turn_on_user(key.name, days.days)
         logger.info(f"Был продлен ключ: {key}\nХост: {server.host}\nВыбранный тариф: {tariff}")
 
-        # Отправляем уведомление пользователю
-        await send_notification_to_user(bot, user_id, f"Ключ 🔑{get_key_name_without_user_id(key)} был продлен на {add_days} дней.")
-        if promo:
-            await activate_promo(promo, user_id)
+        # ИСПРАВЛЕНИЕ: Отправка уведомления обернута в try-except
+        # Если отправка не удалась, ключ уже продлен, поэтому не пробрасываем исключение
+        try:
+            await send_notification_to_user(bot, user_id, f"Ключ 🔑{get_key_name_without_user_id(key)} был продлен на {add_days} дней.")
+            if promo:
+                await activate_promo(promo, user_id)
 
-        if key.is_test:
-            await notification_service.on_trial_key_created(user_id, key.finish)
-        else:
-            await notification_service.on_paid_key_prolonged(user_id, key.finish)
+            if key.is_test:
+                await notification_service.on_trial_key_created(user_id, key.finish)
+            else:
+                await notification_service.on_paid_key_prolonged(user_id, key.finish)
+        except Exception as notify_error:
+            # Ключ уже продлен в БД и на сервере, но уведомление не отправлено
+            # Логируем ошибку, но не пробрасываем исключение, так как основная операция выполнена
+            logger.error(f"Key {key_id} prolonged successfully, but failed to send notification to user {user_id}: {notify_error}", exc_info=True)
+            # Пытаемся отправить хотя бы базовое уведомление
+            try:
+                await send_notification_to_user(bot, user_id, f"Ваш ключ 🔑{get_key_name_without_user_id(key)} был продлен.")
+            except:
+                pass  # Если и это не удалось, просто логируем
         
         return key  # Всегда возвращаем ключ
     except Exception as e:
+        # Если ошибка произошла до обновления ключа в БД, пробрасываем исключение
+        # Если после - ключ уже продлен, нужно проверить
+        if old_finish and key and key.finish and key.finish > old_finish:
+            # Ключ был продлен, но произошла ошибка
+            logger.warning(f"Key {key_id} was prolonged (finish changed from {old_finish} to {key.finish}), but error occurred: {e}")
+            # Возвращаем ключ, так как продление выполнено
+            return key
         logger.error(f"Error prolonging key {key_id} for user {user_id}: {e}", exc_info=True)
         raise  # Пробрасываем исключение дальше
 
@@ -215,31 +236,43 @@ async def process_success_payment(bot, payment: PaymentsOrm):
         logger.info(f"Payment {payment.label} already processed (key_issued_at set). Skipping.")
         return
     
-    # Если у платежа есть key_id, но нет key_issued_at - ключ был создан, но не отправлен
-    # Необходимо переотправить ключ пользователю
+    # Если у платежа есть key_id, но нет key_issued_at - ключ был создан/продлен, но не отправлен
+    # Проверяем, существует ли ключ и был ли он уже обработан
     if payment.key_id is not None:
-        logger.warning(f"Payment {payment.label} has key_id={payment.key_id} but key_issued_at is not set. Resending key to user.")
+        logger.warning(f"Payment {payment.label} has key_id={payment.key_id} but key_issued_at is not set. Checking if key was already processed.")
         try:
             key = await get_key_by_id(payment.key_id)
             if key:
-                # Переотправляем ключ пользователю - проверяем успешность отправки
-                try:
-                    await send_notification_to_user(bot, payment.user_id, f"Ключ 🔑{get_key_name_without_user_id(key)}:")
-                    await send_notification_to_user(bot, payment.user_id, key.key)
-                    # Только после успешной отправки помечаем как обработанный
-                    await mark_key_issued(payment.id, key_id=payment.key_id)
-                    logger.info(f"Key {payment.key_id} resent to user {payment.user_id} for payment {payment.label}")
-                    return
-                except Exception as send_error:
-                    logger.error(f"Failed to send key {payment.key_id} to user {payment.user_id}: {send_error}", exc_info=True)
-                    # Не помечаем как обработанный, если отправка не удалась
-                    raise  # Пробрасываем, чтобы recovery попробовал снова
+                # Проверяем, есть ли ключ, связанный с этим платежом (новый ключ)
+                existing_key_by_payment = await get_key_by_payment_id(payment.id)
+                
+                if existing_key_by_payment and existing_key_by_payment.id == key.id:
+                    # Это новый ключ, созданный для этого платежа - просто отправляем уведомление
+                    logger.info(f"Key {key.id} already exists for payment {payment.label}. Resending notification.")
+                    try:
+                        await send_notification_to_user(bot, payment.user_id, f"Ключ 🔑{get_key_name_without_user_id(key)}:")
+                        await send_notification_to_user(bot, payment.user_id, key.key)
+                        await mark_key_issued(payment.id, key_id=key.id)
+                        logger.info(f"Key {key.id} notification resent to user {payment.user_id} for payment {payment.label}")
+                        return
+                    except Exception as send_error:
+                        logger.error(f"Failed to send key {key.id} to user {payment.user_id}: {send_error}", exc_info=True)
+                        # Ключ существует, помечаем как обработанный даже если отправка не удалась
+                        await mark_key_issued(payment.id, key_id=key.id)
+                        logger.info(f"Key {key.id} marked as issued despite notification failure for payment {payment.label}")
+                        return
+                else:
+                    # Это продление существующего ключа
+                    # ИСПРАВЛЕНИЕ: Всегда выполняем продление, даже если ключ еще активен
+                    # Пользователь должен иметь возможность продлить ключ в любой момент
+                    logger.info(f"Key {key.id} exists for payment {payment.label}. Will proceed with prolongation (key can be prolonged even if still active).")
+                    # Продолжаем обработку ниже для выполнения продления
             else:
                 logger.error(f"Key {payment.key_id} not found for payment {payment.label}. Will create new key.")
                 # Ключ не найден, создадим новый ниже
         except Exception as e:
-            logger.error(f"Error resending key {payment.key_id} for payment {payment.label}: {e}", exc_info=True)
-            # Продолжаем обработку, чтобы создать новый ключ
+            logger.error(f"Error checking key {payment.key_id} for payment {payment.label}: {e}", exc_info=True)
+            # Продолжаем обработку, чтобы создать/продлить ключ
     
     # Проверяем существование ключа по payment_id (правило 1 платеж → 1 ключ)
     existing_key = await get_key_by_payment_id(payment.id)
