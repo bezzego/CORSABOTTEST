@@ -61,12 +61,25 @@ async def clb_get_access_select_tariff(callback: CallbackQuery, callback_data: T
 
     if callback_data.key_id:
         tariff = await get_tariff(callback_data.tariff_id)
+        
+        if not tariff:
+            logger.error(f"clb_get_access_select_tariff: tariff {callback_data.tariff_id} not found")
+            await callback.message.answer("⚠️ Тариф не найден. Пожалуйста, попробуйте выбрать тариф заново.")
+            await state.clear()
+            return
 
         await update_inline_reply_markup(callback, edit_inline_keyboard_select_tariff)
         msg = await create_tariff_menu(callback, callback_data, tariff)
 
+        # Сохраняем данные в состоянии для продления ключа
         await state.set_state(TariffState.buy_tariff)
-        await state.update_data(msg_buy_tariff_id=msg.message_id, tariff_obj=tariff)
+        await state.update_data(
+            msg_buy_tariff_id=msg.message_id, 
+            tariff_obj=tariff,
+            key_id=callback_data.key_id,
+            tariff_id=callback_data.tariff_id,
+            device=callback_data.device  # Может быть None для продления, но сохраняем
+        )
 
     else:
         msg = await create_select_device_menu(callback, callback_data)
@@ -80,7 +93,7 @@ async def clb_get_access_select_device(callback: CallbackQuery, callback_data: T
     """Реакция на выбор девайса"""
     await callback.answer()
     current_state = await state.get_state()
-    logger.debug(f"clb_get_access_select_device: state: {current_state} | data: {callback.data}")
+    logger.debug(f"clb_get_access_select_device: state: {current_state} | data: {callback.data} | device: {callback_data.device}")
 
     if current_state == TariffState.buy_tariff:
         state_data = await state.get_data()
@@ -88,12 +101,25 @@ async def clb_get_access_select_device(callback: CallbackQuery, callback_data: T
         await state.update_data(state_data)
 
     tariff = await get_tariff(callback_data.tariff_id)
+    
+    if not tariff:
+        logger.error(f"clb_get_access_select_device: tariff {callback_data.tariff_id} not found")
+        await callback.message.answer("⚠️ Тариф не найден. Пожалуйста, попробуйте выбрать тариф заново.")
+        await state.clear()
+        return
 
     await update_inline_reply_markup(callback, edit_inline_keyboard_select_device)
     msg = await create_tariff_menu(callback, callback_data, tariff)
 
+    # Сохраняем device в состоянии FSM для использования в buy_tariff
     await state.set_state(TariffState.buy_tariff)
-    await state.update_data(msg_buy_tariff_id=msg.message_id, tariff_obj=tariff)
+    await state.update_data(
+        msg_buy_tariff_id=msg.message_id, 
+        tariff_obj=tariff,
+        device=callback_data.device,  # Сохраняем device в состоянии
+        tariff_id=callback_data.tariff_id,
+        key_id=callback_data.key_id
+    )
 
 
 @router.callback_query(Tariffs.filter(F.action == "promo"), TariffState.buy_tariff)
@@ -171,27 +197,42 @@ async def clb_get_access_buy_tariff(callback: CallbackQuery, callback_data: Tari
             return
 
         promo: PromoOrm = state_data.get("promo")
-        logger.debug(f"clb_get_access_buy_tariff: tariff: {tariff} | device: {callback_data.device} | key_id: {callback_data.key_id} | data: {callback.data}")
         
-        if not callback_data.device:
-            logger.error(f"clb_get_access_buy_tariff: device is None for user {callback.from_user.id}")
+        # ИСПРАВЛЕНИЕ: Используем device из callback_data, если он есть, иначе из состояния FSM
+        device = callback_data.device or state_data.get("device")
+        key_id = callback_data.key_id or state_data.get("key_id")
+        tariff_id = callback_data.tariff_id or state_data.get("tariff_id")
+        
+        logger.debug(f"clb_get_access_buy_tariff: tariff: {tariff} | device from callback: {callback_data.device} | device from state: {state_data.get('device')} | final device: {device} | key_id: {key_id} | data: {callback.data}")
+        
+        # Если device все еще None, перенаправляем на выбор устройства
+        if not device:
+            logger.error(f"clb_get_access_buy_tariff: device is None for user {callback.from_user.id}, redirecting to device selection")
+            # Создаем callback_data для выбора устройства
+            device_callback_data = Tariffs(
+                action="select_tariff",
+                tariff_id=str(tariff.id),
+                device=None,
+                key_id=key_id
+            )
+            msg = await create_select_device_menu(callback, device_callback_data)
+            await state.set_state(TariffState.select_device)
+            await state.update_data(msg_select_device_id=msg.message_id, tariff_obj=tariff, key_id=key_id)
             await callback.message.answer(
-                "⚠️ Не выбран тип устройства. Пожалуйста, выберите устройство и попробуйте снова.",
+                "⚠️ Не выбран тип устройства. Пожалуйста, выберите устройство:",
                 parse_mode=ParseMode.HTML
             )
-            await state.clear()
             return
 
         price = tariff.price if not promo else int((tariff.price / 100) * (100 - promo.price))
         discount = "" if not promo else f" <b>({tariff.price}₽ - {promo.price}% скидка)</b>"
-        key_id = callback_data.key_id
         
         try:
             pay_url, label = await create_payment(
                 tariff=tariff,
                 price=price,
                 user_id=callback.from_user.id,
-                device=callback_data.device,
+                device=device,  # Используем device из состояния или callback_data
                 key_id=key_id,
                 promo=promo.id if promo else None)
         except Exception as e:
@@ -205,11 +246,19 @@ async def clb_get_access_buy_tariff(callback: CallbackQuery, callback_data: Tari
 
         await update_inline_reply_markup(callback, edit_inline_markup_add_symbol, 0)
 
+        # Создаем callback_data с правильным device для кнопок платежа
+        payment_callback_data = Tariffs(
+            action="cancel_payment",
+            tariff_id=str(tariff.id),
+            device=device,
+            key_id=key_id
+        )
+
         text = f"🚀 <b>Тариф «{tariff.name}»</b>\n\nК оплате: <b>{price}₽{discount}</b>\n\n✅ Чтобы перейти на сайт платежной системы, нажмите ниже на кнопку.\n\n📌<b> После оплаты активация произойдёт автоматически.</b>"
         await callback.message.answer(
             text=text,
             parse_mode=ParseMode.HTML,
-            reply_markup=get_payments_buttons(callback_data, pay_url))
+            reply_markup=get_payments_buttons(payment_callback_data, pay_url))
 
         await state.clear()
     except Exception as e:

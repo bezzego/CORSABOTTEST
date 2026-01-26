@@ -11,6 +11,11 @@ client = Client(settings.payments.token)
 
 async def create_payment(tariff, price, user_id, device, key_id=None, promo=None):
     """Создание юмани платежа"""
+    # Гарантируем, что device всегда установлен
+    if not device or device.strip() == "":
+        device = "unknown"
+        logger.warning(f"create_payment: device is empty for user {user_id}, using 'unknown' as fallback")
+    
     label = str(uuid4())
     payment = Quickpay(
         receiver=str(client.account_info().account),
