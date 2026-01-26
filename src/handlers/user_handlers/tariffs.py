@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from src.database.crud import get_tariff, get_user
 from src.database.crud.promo import get_promo_by_code
+from src.database.crud.keys import get_key_by_id
 from src.database.models import TariffsOrm, PromoOrm
 from src.keyboards.inline_user import get_select_device_buttons, \
     edit_inline_keyboard_select_tariff, get_buy_tariff_buttons, \
@@ -205,7 +206,32 @@ async def clb_get_access_buy_tariff(callback: CallbackQuery, callback_data: Tari
         
         logger.debug(f"clb_get_access_buy_tariff: tariff: {tariff} | device from callback: {callback_data.device} | device from state: {state_data.get('device')} | final device: {device} | key_id: {key_id} | data: {callback.data}")
         
-        # Если device все еще None, перенаправляем на выбор устройства
+        # ИСПРАВЛЕНИЕ: Если это продление ключа (key_id указан), берем device из существующего ключа
+        if not device and key_id:
+            logger.info(f"clb_get_access_buy_tariff: device is None but key_id={key_id} provided. Getting device from existing key.")
+            try:
+                existing_key = await get_key_by_id(key_id)
+                if existing_key and existing_key.device:
+                    device = existing_key.device
+                    logger.info(f"clb_get_access_buy_tariff: Using device '{device}' from existing key {key_id}")
+                else:
+                    logger.error(f"clb_get_access_buy_tariff: Key {key_id} not found or has no device")
+                    await callback.message.answer(
+                        "⚠️ Ключ не найден. Пожалуйста, попробуйте снова.",
+                        parse_mode=ParseMode.HTML
+                    )
+                    await state.clear()
+                    return
+            except Exception as e:
+                logger.error(f"clb_get_access_buy_tariff: Error getting key {key_id}: {e}", exc_info=True)
+                await callback.message.answer(
+                    "⚠️ Произошла ошибка при получении информации о ключе. Пожалуйста, попробуйте снова.",
+                    parse_mode=ParseMode.HTML
+                )
+                await state.clear()
+                return
+        
+        # Если device все еще None (и это не продление), перенаправляем на выбор устройства
         if not device:
             logger.error(f"clb_get_access_buy_tariff: device is None for user {callback.from_user.id}, redirecting to device selection")
             # Создаем callback_data для выбора устройства
