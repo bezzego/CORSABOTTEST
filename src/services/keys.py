@@ -260,25 +260,23 @@ class X3UI:
         port = inbound.get("port")
 
         try:
-            # Формируем базовый URL
+            # Формируем VLESS URL в формате, совместимом с админкой и клиентами (Reality)
+            # Порядок: type, encryption=none, security, pbk, fp, sni, sid, spx, flow (в конце)
+            network = stream.get("network") or "tcp"
+            security_val = stream.get("security") or "reality"
             url = (
-                f"vless://{key_id}@{ip}:{port}"
-                f"?type={stream.get('network')}&security={stream.get('security')}"
-            )
-            
-            # Добавляем flow, если он есть
-            if flow:
-                url += f"&flow={flow}"
-            
-            # Добавляем остальные параметры
-            url += (
-                f"&fp=chrome"
+                f"vless://{key_id}@{ip}:{port}/"
+                f"?type={network}&encryption=none&security={security_val}"
                 f"&pbk={stream['realitySettings']['settings']['publicKey']}"
+                f"&fp=chrome"
                 f"&sni={stream['realitySettings']['serverNames'][0]}"
                 f"&sid={stream['realitySettings']['shortIds'][0]}"
-                f"&spx=%2F#{settings.prefix}-{key_name}"
+                f"&spx=%2F"
             )
-            
+            # flow в конце (как в админке) — важно для совместимости клиентов
+            if flow:
+                url += f"&flow={flow}"
+            url += f"#{settings.prefix}-{key_name}"
             return url
         except Exception:
             logger.error("get_key failed", exc_info=True)
