@@ -126,6 +126,7 @@ class ServersOrm(Base):
     password: Mapped[str] = mapped_column(Text, nullable=False)
     max_users: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
     is_test: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    flow_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class KeysOrm(Base):

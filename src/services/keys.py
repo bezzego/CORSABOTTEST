@@ -119,20 +119,32 @@ class X3UI:
         response = self._request("get", "/panel/api/inbounds/list")
         return response.json() if response else {}
 
+    def _client_dict(self, key_name, x_time, enable, client_id=None):
+        """Собирает словарь клиента для панели. flow добавляется только если у сервера flow_enabled=True."""
+        d = {
+            "id": client_id or str(uuid.uuid1()),
+            "alterId": 90,
+            "email": str(key_name),
+            "limitIp": 1,
+            "totalGB": 0,
+            "expiryTime": x_time,
+            "enable": enable,
+            "tgId": str(key_name),
+            "subId": ""
+        }
+        if getattr(self.server, "flow_enabled", True):
+            d["flow"] = "xtls-rprx-vision"
+        return d
+
     def create_key(self, key_name, days):
         epoch = datetime.datetime.utcfromtimestamp(0)
         x_time = int((datetime.datetime.now() - epoch).total_seconds() * 1000)
         x_time += 86400000 * (days + 1) - 10800000
 
+        client = self._client_dict(key_name, x_time, True)
         data = {
             "id": self.inbound_id,
-            "settings":
-                "{\"clients\":"
-                "[{\"id\":\"" + str(uuid.uuid1()) + "\","
-                                                    "\"alterId\":90,\"email\":\"" + str(key_name) + "\","
-                                                                                                    "\"flow\":\"xtls-rprx-vision\",\"limitIp\":1,\"totalGB\":0,"
-                                                                                                    "\"expiryTime\":" + str(
-                    x_time) + ",\"enable\":true,\"tgId\":\"" + str(key_name) + "\",\"subId\":\"\"}]}"
+            "settings": json.dumps({"clients": [client]})
         }
 
         self.auth()
@@ -173,22 +185,10 @@ class X3UI:
             logger.error("turn_off_user: user not found for key=%s", key_name)
             return None
 
+        client = self._client_dict(key_name, x_time, False, client_id=user_id)
         data = {
             "id": self.inbound_id,
-            "settings": json.dumps({
-                "clients": [{
-                    "id": user_id,
-                    "alterId": 90,
-                    "email": str(key_name),
-                    "flow": "xtls-rprx-vision",
-                    "limitIp": 1,
-                    "totalGB": 0,
-                    "expiryTime": x_time,
-                    "enable": False,
-                    "tgId": str(key_name),
-                    "subId": ""
-                }]
-            })
+            "settings": json.dumps({"clients": [client]})
         }
 
         self.auth()
@@ -205,22 +205,10 @@ class X3UI:
             logger.error("turn_on_user: user not found for key=%s", key_name)
             return None
 
+        client = self._client_dict(key_name, x_time, True, client_id=user_id)
         data = {
             "id": self.inbound_id,
-            "settings": json.dumps({
-                "clients": [{
-                    "id": user_id,
-                    "alterId": 90,
-                    "email": str(key_name),
-                    "flow": "xtls-rprx-vision",
-                    "limitIp": 1,
-                    "totalGB": 0,
-                    "expiryTime": x_time,
-                    "enable": True,
-                    "tgId": str(key_name),
-                    "subId": ""
-                }]
-            })
+            "settings": json.dumps({"clients": [client]})
         }
 
         self.auth()

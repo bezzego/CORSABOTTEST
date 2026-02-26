@@ -51,11 +51,15 @@ class AdminServers(StatesGroup):
     change_test = State()
     change_test_confirm = State()
 
+    change_flow = State()
+    change_flow_confirm = State()
+
     delete_confirm = State()
 
     add_address = State()
     add_login = State()
     add_password = State()
+    add_flow = State()
     add_confirm = State()
 
 

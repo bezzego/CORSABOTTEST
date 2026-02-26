@@ -77,7 +77,7 @@ async def delete_server(server_id: int):
             logger.debug(f"Delete server: {result.scalar()}")
 
 
-async def add_server(address: str, login: str, password: str):
+async def add_server(address: str, login: str, password: str, flow_enabled: bool = True):
     """Создание нового сервера в бд"""
     async with AsyncSessionLocal() as session:
         async with session.begin():
@@ -86,7 +86,8 @@ async def add_server(address: str, login: str, password: str):
                 login=login,
                 password=password,
                 max_users=20,
-                is_test=False)
+                is_test=False,
+                flow_enabled=flow_enabled)
             session.add(new_server)
             await session.flush()
             logger.debug(f"Add new server: {new_server}")
