@@ -278,6 +278,9 @@ def get_edit_server_buttons(server_id: int, page: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="Изменить Тест статус", callback_data=EditServers(action="change_test", server_id=server_id, page=page).pack())
         ],
         [
+            InlineKeyboardButton(text="Изменить flow xtls-rprx-vision", callback_data=EditServers(action="change_flow", server_id=server_id, page=page).pack())
+        ],
+        [
             InlineKeyboardButton(text="Назад", callback_data=EditServers(action="back", server_id=server_id, page=page).pack())
         ],
     ]

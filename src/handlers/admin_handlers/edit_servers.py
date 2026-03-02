@@ -47,6 +47,7 @@ ID: <code>{server.id}</code>
 Макс ключей: <code>{server.max_users}</code>
 Ключей на сервере: <code>{len(keys_count)}</code>
 Тестовый: <code>{server.is_test}</code>
+flow xtls-rprx-vision: <code>{server.flow_enabled}</code>
 """,
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup)
@@ -137,7 +138,8 @@ async def clb_cancel(callback: CallbackQuery, callback_data: EditServers):
 
 
 @router.callback_query(EditServers.filter(F.action == "cancel_change"), StateFilter(
-    AdminServers.change_address_confirm, AdminServers.change_login_confirm, AdminServers.change_password_confirm))
+    AdminServers.change_address_confirm, AdminServers.change_login_confirm, AdminServers.change_password_confirm,
+    AdminServers.change_max_users_confirm, AdminServers.change_test_confirm, AdminServers.change_flow_confirm))
 async def clb_change_cancel(callback: CallbackQuery, callback_data: EditServers, state: FSMContext):
     await callback.answer()
     await callback.message.answer("Успешно, отмена изменений!")
@@ -373,6 +375,64 @@ async def clb_change_test_status_confirm(callback: CallbackQuery, callback_data:
     await state.set_state(AdminServers.edit)
 
 
+"""───────────────────────────────────────────── Callbacks Edit Flow ─────────────────────────────────────────────"""
+
+
+@router.callback_query(EditServers.filter(F.action == "change_flow"))
+async def clb_change_flow(callback: CallbackQuery, callback_data: EditServers, state: FSMContext):
+    await callback.answer()
+    await callback.message.answer(
+        text="Включать flow xtls-rprx-vision при создании ключей? (введите <code>yes</code>/<code>no</code>)",
+        parse_mode=ParseMode.HTML)
+    await state.set_state(AdminServers.change_flow)
+    await state.update_data(callback_data=callback_data)
+
+
+@router.message(AdminServers.change_flow)
+async def get_text_change_flow(message: Message, state: FSMContext):
+    try:
+        text = message.text.strip().lower()
+        if text not in ("yes", "no", "да", "нет", "y", "n", "+", "-"):
+            await message.answer("Ошибка! Введите yes/no (да/нет), попробуйте снова.")
+            return
+
+        flow_enabled = text in ("yes", "да", "y", "+")
+        state_data = await state.get_data()
+        callback_data = state_data["callback_data"]
+        await message.answer(
+            text=(
+                "Вы уверены что хотите "
+                f"{'включить' if flow_enabled else 'выключить'} flow xtls-rprx-vision "
+                "для этого сервера?"
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_confirm_buttons(EditServers, server_id=callback_data.server_id, page=callback_data.page))
+
+        await state.set_state(AdminServers.change_flow_confirm)
+        await state.update_data(new_flow_enabled=flow_enabled)
+
+    except Exception as e:
+        await message.answer(f"Error:\n{e}")
+        logger.error(e, exc_info=True)
+        await state.clear()
+
+
+@router.callback_query(EditServers.filter(F.action == "confirm_change"), AdminServers.change_flow_confirm)
+async def clb_change_flow_confirm(callback: CallbackQuery, callback_data: EditServers, state: FSMContext):
+    state_data = await state.get_data()
+    await change_server_value(int(callback_data.server_id), flow_enabled=state_data["new_flow_enabled"])
+    await callback.answer()
+    await callback.message.answer(
+        text=(
+            "Успешно, изменён режим flow!\n\n"
+            f"Новый режим flow xtls-rprx-vision: <code>{state_data['new_flow_enabled']}</code>"
+        ),
+        parse_mode=ParseMode.HTML)
+
+    await show_servers(callback.message)
+    await state.set_state(AdminServers.edit)
+
+
 """───────────────────────────────────────────── Callbacks Delete Tariff ─────────────────────────────────────────────"""
 
 
@@ -427,21 +487,48 @@ async def get_text_add_login(message: Message, state: FSMContext):
 async def get_text_add_password(message: Message, state: FSMContext):
     try:
         await state.update_data(password=message.text)
+        await message.answer(
+            text=(
+                f"Получен пароль: <code>{message.text}</code>\n\n"
+                "Включать flow xtls-rprx-vision при создании ключей на этом сервере? "
+                "(введите <code>yes</code>/<code>no</code>)"
+            ),
+            parse_mode=ParseMode.HTML)
+
+        await state.set_state(AdminServers.add_flow)
+
+    except Exception as e:
+        await message.answer(f"Error:\n{e}")
+        logger.error(e, exc_info=True)
+        await state.clear()
+
+
+@router.message(AdminServers.add_flow)
+async def get_text_add_flow(message: Message, state: FSMContext):
+    try:
+        text = message.text.strip().lower()
+        if text not in ("yes", "no", "да", "нет", "y", "n", "+", "-"):
+            await message.answer("Ошибка! Введите yes/no (да/нет), попробуйте снова.")
+            return
+
+        flow_enabled = text in ("yes", "да", "y", "+")
+        await state.update_data(flow_enabled=flow_enabled)
         state_data = await state.get_data()
-        print(state_data)
+
         await message.answer(
             text=f"""
 <b>Создание нового сервера:</b>
 
 Адрес: <b>{state_data['address']}</b>
 Логин: <b>{state_data['login']}</b>
-Пароль: <b>{message.text}</b>
+Пароль: <b>{state_data['password']}</b>
 Максимум ключей: <b>20</b>
 Тестовый режим: <b>Выключен</b>
+flow xtls-rprx-vision: <b>{'Включен' if flow_enabled else 'Выключен'}</b>
 
 Создать сервер с вышеуказанными параметрами?""",
             parse_mode=ParseMode.HTML,
-            reply_markup=get_confirm_buttons(AddServer, address="confirm", login=state_data['login'], password=message.text))
+            reply_markup=get_confirm_buttons(AddServer, address="confirm", login=state_data['login'], password=state_data['password']))
 
         await state.set_state(AdminServers.add_confirm)
 
@@ -454,7 +541,11 @@ async def get_text_add_password(message: Message, state: FSMContext):
 @router.callback_query(AddServer.filter(F.action == "confirm_change"), AdminServers.add_confirm)
 async def clb_create_server_confirm(callback: CallbackQuery, callback_data: AddServer, state: FSMContext):
     data = await state.get_data()
-    await add_server(data["address"], data["login"], data["password"])
+    await add_server(
+        data["address"],
+        data["login"],
+        data["password"],
+        flow_enabled=data.get("flow_enabled", True))
     await callback.answer()
     await callback.message.answer(
         text=f"Успешно! Сервер был создан",
