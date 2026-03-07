@@ -40,6 +40,15 @@ dictLogConfig = {
             "maxBytes": 1 * 1024 * 1024,
             "backupCount": 3
         },
+        "panel_diag_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "level": "INFO",
+            "formatter": "file_format",
+            "filename": "src/logs/panel_diagnostics.log",
+            "encoding": "utf8",
+            "maxBytes": 1 * 1024 * 1024,
+            "backupCount": 3
+        },
         "error_file": {
             "class": "logging.handlers.RotatingFileHandler",
             "level": "ERROR",
@@ -48,6 +57,13 @@ dictLogConfig = {
             "encoding": "utf8",
             "maxBytes": 1 * 1024 * 1024,
             "backupCount": 3
+        },
+    },
+    "loggers": {
+        "panel.diagnostics": {
+            "level": "INFO",
+            "handlers": ["panel_diag_file"],
+            "propagate": False,
         },
     },
     "root": {

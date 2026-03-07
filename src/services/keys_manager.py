@@ -70,8 +70,19 @@ async def create_key(bot: Bot, user_id: int, finish_date: datetime, tariff_id: i
     days = (finish_date - datetime.now()).days
 
     x3_class = X3UI(server=server)
-    x3_class.create_key(name, days)
+    create_resp = x3_class.create_key(name, days)
+    if not create_resp or create_resp.status_code != 200:
+        status = getattr(create_resp, "status_code", None)
+        body = (getattr(create_resp, "text", "") or "")[:200]
+        raise RuntimeError(
+            f"Create key failed for user_id={user_id} on server={server.host}: "
+            f"HTTP {status} body={body}"
+        )
     key = x3_class.get_key(name)
+    if not key:
+        raise RuntimeError(
+            f"Create key failed for user_id={user_id} on server={server.host}: empty key data"
+        )
 
     new_key = await add_new_key(
         user_id=user_id,

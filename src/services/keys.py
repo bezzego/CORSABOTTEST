@@ -17,6 +17,7 @@ from src.logs import getLogger
 from src.utils.utils import get_key_name_without_user_id, get_days_hours_by_ts
 
 logger = getLogger(__name__)
+panel_diag_logger = getLogger("panel.diagnostics")
 
 
 class X3UI:
@@ -75,6 +76,19 @@ class X3UI:
         try:
             logger.debug(f"Making {method.upper()} request to {url}")
             response = getattr(self.ses, method)(url, **kwargs)
+            # Extra diagnostics for problematic panel
+            if "194.147.149.107" in (self.host or ""):
+                content_type = response.headers.get("Content-Type", "")
+                if response.status_code != 200 or "application/json" not in content_type:
+                    panel_diag_logger.warning(
+                        "Panel diagnostics host=%s method=%s path=%s status=%s content-type=%s body=%s",
+                        self.host,
+                        method.upper(),
+                        path,
+                        response.status_code,
+                        content_type,
+                        (response.text or "")[:200],
+                    )
             return response
         except InvalidURL as e:
             logger.error(f"InvalidURL for {url}: {e}", exc_info=True)
@@ -117,7 +131,26 @@ class X3UI:
     def users_list(self):
         self.auth()
         response = self._request("get", "/panel/api/inbounds/list")
-        return response.json() if response else {}
+        if not response:
+            return {}
+        if response.status_code != 200:
+            logger.warning(
+                "users_list: HTTP %s (content-type=%s, body=%s)",
+                response.status_code,
+                response.headers.get("Content-Type"),
+                (response.text or "")[:200],
+            )
+            return {}
+        try:
+            return response.json()
+        except ValueError:
+            logger.warning(
+                "users_list: Failed to parse JSON (status=%s, content-type=%s, body=%s)",
+                response.status_code,
+                response.headers.get("Content-Type"),
+                (response.text or "")[:200],
+            )
+            return {}
 
     def _client_dict(self, key_name, x_time, enable, client_id=None):
         """Собирает словарь клиента для панели. flow добавляется только если у сервера flow_enabled=True."""
