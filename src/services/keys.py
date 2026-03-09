@@ -188,7 +188,11 @@ class X3UI:
             json=data
         )
 
-    def get_user_id(self, key_name):
+    def _get_client_settings(self, key_name: str) -> dict | None:
+        """
+        Возвращает dict клиента из настроек панели по его email (key_name).
+        Нужен, чтобы при обновлении пользователя не затирать существующий flow.
+        """
         data = self.users_list()
 
         obj = data.get("obj") or []
@@ -203,10 +207,16 @@ class X3UI:
             users = json.loads(settings_raw)
             for client in users.get("clients", []):
                 if str(client.get("email")) == str(key_name):
-                    return client.get("id")
+                    return client
         except Exception:
-            logger.error("get_user_id failed", exc_info=True)
+            logger.error("_get_client_settings failed", exc_info=True)
 
+        return None
+
+    def get_user_id(self, key_name):
+        client = self._get_client_settings(key_name)
+        if client:
+            return client.get("id")
         return None
 
     def turn_off_user(self, key_name):
@@ -218,7 +228,24 @@ class X3UI:
             logger.error("turn_off_user: user not found for key=%s", key_name)
             return None
 
-        client = self._client_dict(key_name, x_time, False, client_id=user_id)
+        # При выключении пользователя не трогаем его flow:
+        # берем существующие настройки клиента и только обновляем expiryTime/enable.
+        existing = self._get_client_settings(key_name) or {}
+        client = {
+            "id": user_id,
+            "alterId": existing.get("alterId", 90),
+            "email": existing.get("email", str(key_name)),
+            "limitIp": existing.get("limitIp", 1),
+            "totalGB": existing.get("totalGB", 0),
+            "expiryTime": x_time,
+            "enable": False,
+            "tgId": existing.get("tgId", str(key_name)),
+            "subId": existing.get("subId", ""),
+        }
+        # Копируем flow как есть: если его не было — не добавляем.
+        if "flow" in existing:
+            client["flow"] = existing["flow"]
+
         data = {
             "id": self.inbound_id,
             "settings": json.dumps({"clients": [client]})
@@ -238,7 +265,22 @@ class X3UI:
             logger.error("turn_on_user: user not found for key=%s", key_name)
             return None
 
-        client = self._client_dict(key_name, x_time, True, client_id=user_id)
+        # При продлении ключа не меняем flow у уже существующего клиента.
+        existing = self._get_client_settings(key_name) or {}
+        client = {
+            "id": user_id,
+            "alterId": existing.get("alterId", 90),
+            "email": existing.get("email", str(key_name)),
+            "limitIp": existing.get("limitIp", 1),
+            "totalGB": existing.get("totalGB", 0),
+            "expiryTime": x_time,
+            "enable": True,
+            "tgId": existing.get("tgId", str(key_name)),
+            "subId": existing.get("subId", ""),
+        }
+        if "flow" in existing:
+            client["flow"] = existing["flow"]
+
         data = {
             "id": self.inbound_id,
             "settings": json.dumps({"clients": [client]})
