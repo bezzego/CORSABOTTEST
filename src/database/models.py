@@ -171,6 +171,9 @@ class TextSettingsOrm(Base):
     windows_video: Mapped[str] = mapped_column(Text, default="BAACAgIAAxkBAAJZDmWZY4D2OTOynOdcIKdTqbFFqk5NAALfRAACjpHRSEZfmtGQIVMtNAQ", nullable=True)
     windows_url: Mapped[str] = mapped_column(Text, default="https://github.com/MatsuriDayo/nekoray/releases/download/3.26/nekoray-3.26-2023-12-09-windows64.zip", nullable=True)
 
+    tv_video: Mapped[str] = mapped_column(Text, default=None, nullable=True)
+    tv_url: Mapped[str] = mapped_column(Text, default=None, nullable=True)
+
     faq_list: Mapped[str] = mapped_column(MutableList.as_mutable(ARRAY(Text)), default=list)
     test_hours: Mapped[int] = mapped_column(Integer, default=48)
 

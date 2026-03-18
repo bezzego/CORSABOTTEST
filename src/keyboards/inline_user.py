@@ -33,7 +33,8 @@ def get_select_device_buttons(callback_data_model, **kwargs):
         [InlineKeyboardButton(text="iPhone", callback_data=callback_data_model(**kwargs, action="select_device", device="iphone").pack()),
          InlineKeyboardButton(text="Android", callback_data=callback_data_model(**kwargs, action="select_device", device="android").pack())],
         [InlineKeyboardButton(text="Mac OS", callback_data=callback_data_model(**kwargs, action="select_device", device="macos").pack()),
-         InlineKeyboardButton(text="Windows", callback_data=callback_data_model(**kwargs, action="select_device", device="windows").pack())]
+         InlineKeyboardButton(text="Windows", callback_data=callback_data_model(**kwargs, action="select_device", device="windows").pack())],
+        [InlineKeyboardButton(text="TV", callback_data=callback_data_model(**kwargs, action="select_device", device="tv").pack())]
     ])
 
 

@@ -26,6 +26,7 @@ logger = getLogger(__name__)
         F.text == get_reply_admin_btn("adm_inst_windows"),
         F.text == get_reply_admin_btn("adm_inst_android"),
         F.text == get_reply_admin_btn("adm_inst_macos"),
+        F.text == get_reply_admin_btn("adm_inst_tv"),
          ), AdminMenu.inst_menu)
 @auth_admin_role
 async def cmd_admin_select_device(message: Message, state: FSMContext):
@@ -33,7 +34,8 @@ async def cmd_admin_select_device(message: Message, state: FSMContext):
         "iPhone": "iphone",
         "Windows": "windows",
         "Android": "android",
-        "Mac OS": "macos"
+        "Mac OS": "macos",
+        "TV": "tv"
     }
     device = device_list.get(message.text)
     await message.answer(

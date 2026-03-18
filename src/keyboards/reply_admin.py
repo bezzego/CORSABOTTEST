@@ -25,6 +25,7 @@ REPLY_ADMIN_BTN = {
     "adm_inst_android": "Android",
     "adm_inst_windows": "Windows",
     "adm_inst_macos": "Mac OS",
+    "adm_inst_tv": "TV",
 
     "adm_user_add_days": "Добавление дней к ключу пользователя",
     "adm_user_transfer_user_key": "Перенос ключа пользователя",
@@ -107,6 +108,7 @@ def get_admin_inst_menu():
          KeyboardButton(text=get_reply_admin_btn("adm_inst_android"))],
         [KeyboardButton(text=get_reply_admin_btn("adm_inst_macos")),
          KeyboardButton(text=get_reply_admin_btn("adm_inst_windows"))
-         ]
+         ],
+        [KeyboardButton(text=get_reply_admin_btn("adm_inst_tv"))]
     ]
     return ReplyKeyboardMarkup(keyboard=kb_list, resize_keyboard=True)
