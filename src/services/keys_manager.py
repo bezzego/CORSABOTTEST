@@ -226,7 +226,7 @@ async def transfer_key_to_select_server(bot: Bot, key_id: int, server_id: int):
         await update_key_transfer(key)
 
         logger.info(f"Был перенесен ключ на другой сервер: key: {key} to server: {transfer_server}")
-        text = f"Ваш ключ 🔑{get_key_name_without_user_id(key)} был перенесен на другой сервер.\nСрок действия ключа не изменился.\nВаш новый ключ:"
+        text = f"Ваш ключ 🔑{get_key_name_without_user_id(key)} был перенесен на другой сервер.\nСрок действия ключа не изменился.\nСтарый ключ нужно удалить из приложения и добавить ключ ниже:"
         await send_notification_to_user(bot, key.user_id, text)
         await send_notification_to_user(bot, key.user_id, key_data)
 
