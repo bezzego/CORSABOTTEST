@@ -86,6 +86,18 @@ async def get_users():
             return users.scalars().all()
 
 
+async def update_user_email(user_id: int, email: str):
+    """Обновление email пользователя"""
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            user = await session.get(UsersOrm, int(user_id))
+            if user:
+                user.email = email
+                await session.flush()
+                logger.debug(f"Updated user email: user_id={user_id}, email={email}")
+                return user
+
+
 async def ban_unban_user(user: UsersOrm, action: str):
     """Бан/Unban юзера"""
     async with AsyncSessionLocal() as session:

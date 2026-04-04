@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timedelta
 from typing import Optional
 from aiogram import Router, F
@@ -5,15 +6,16 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
-from src.database.crud import get_text_settings
+from src.database.crud import get_text_settings, get_user
 from src.database.crud.keys import get_user_keys
+from src.database.crud.users import update_user_email
 from src.handlers.user_handlers.func_create_menu import create_menu_tariffs, create_start_menu
 from src.keyboards.inline_user import get_select_device_buttons, get_inline_markup_with_url, \
     edit_inline_keyboard_select_device, get_inline_markup_my_keys
 from src.keyboards.user_callback_datas import VideoInstruction, TestSub
 from src.keyboards.reply_user import get_reply_user_btn
 from src.services.keys_manager import create_key
-from src.states.user_states import TestSubState
+from src.states.user_states import TestSubState, EmailState
 from src.utils.utils_async import auth_user_role, update_inline_reply_markup, check_have_servers, show_device_inst
 from src.logs import getLogger
 
@@ -78,6 +80,39 @@ async def cmd_my_keys(message: Message):
         text="<b>Ваши ключи:</b>\n\nВоспользуйтесь кнопками для взаимодействия с определенными ключами ⬇️",
         parse_mode=ParseMode.HTML,
         reply_markup=await get_inline_markup_my_keys(keys))
+
+
+@router.message(F.text == get_reply_user_btn("email"))
+@auth_user_role
+async def cmd_email(message: Message, state: FSMContext):
+    user = await get_user(message.from_user)
+    if user and user.email:
+        await message.answer(
+            text=f"Ваша текущая почта: <code>{user.email}</code>\n\nОтправьте новый адрес, чтобы изменить, или /cancel для отмены.",
+            parse_mode=ParseMode.HTML)
+    else:
+        await message.answer("Отправьте ваш email адрес ⬇️\n\nДля отмены отправьте /cancel")
+    await state.set_state(EmailState.waiting_for_email)
+
+
+@router.message(EmailState.waiting_for_email, F.text == "/cancel")
+async def cmd_email_cancel(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Ввод почты отменён.")
+
+
+@router.message(EmailState.waiting_for_email)
+async def process_email_input(message: Message, state: FSMContext):
+    email = message.text.strip() if message.text else ""
+    if not re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
+        await message.answer("Некорректный email. Попробуйте ещё раз или отправьте /cancel для отмены.")
+        return
+
+    await update_user_email(message.from_user.id, email)
+    await state.clear()
+    await message.answer(
+        text=f"Почта <code>{email}</code> успешно сохранена!",
+        parse_mode=ParseMode.HTML)
 
 
 @router.message(F.text == get_reply_user_btn("get_access"))

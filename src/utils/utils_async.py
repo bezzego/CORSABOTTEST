@@ -180,6 +180,7 @@ async def export_users_to_excel():
         '№': [],
         'ID': [],
         'Имя и юзернейм': [],
+        'Email': [],
         'Пробная подписка': [],
         'Промокод': [],
         'Кол-во ключей': [],
@@ -210,6 +211,7 @@ async def export_users_to_excel():
         users_data['№'].append(index)
         users_data['ID'].append(user.id)
         users_data['Имя и юзернейм'].append(user.username or "Не указано")
+        users_data['Email'].append(user.email or "-")
         users_data['Пробная подписка'].append("Использована" if user.test_sub else "Нет")
         users_data['Промокод'].append("Использован" if user.used_promo else "Нет")
 
@@ -313,6 +315,7 @@ async def export_keys_to_excel():
         '№': [],
         'Название': [],
         'Пользователь': [],
+        'Email': [],
         'Сервер': [],
         'Начало': [],
         'Конец': [],
@@ -329,11 +332,12 @@ async def export_keys_to_excel():
         keys_data['№'].append(index)
         keys_data['Название'].append(key.name)
         keys_data['Пользователь'].append(key.user_id)
+        user_obj = users_map.get(key.user_id)
+        keys_data['Email'].append(user_obj.email if user_obj and user_obj.email else '-')
         keys_data['Сервер'].append(servers.get(key.server_id, "Unknown"))
         keys_data['Начало'].append(key.start.strftime('%Y-%m-%d %H:%M:%S'))
         keys_data['Конец'].append(key.finish.strftime('%Y-%m-%d %H:%M:%S'))
         keys_data['Ключ'].append(key.key[:-1])
-        user_obj = users_map.get(key.user_id)
         keys_data['Источник'].append(user_obj.enter_start_text if user_obj and user_obj.enter_start_text else '-')
         keys_data['Тестовый ключ?'].append('Да' if key.is_test else 'Нет')
 

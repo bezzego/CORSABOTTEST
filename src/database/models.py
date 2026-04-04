@@ -56,6 +56,7 @@ class UsersOrm(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     username: Mapped[str] = mapped_column(Text, nullable=True)
+    email: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     balance: Mapped[float] = mapped_column(Numeric, nullable=False, default=0)
     test_sub: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     trial_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)

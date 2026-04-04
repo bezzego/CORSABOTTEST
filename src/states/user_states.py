@@ -19,3 +19,7 @@ class TestSubState(StatesGroup):
     """
     select_device = State()
     create_key = State()
+
+
+class EmailState(StatesGroup):
+    waiting_for_email = State()
