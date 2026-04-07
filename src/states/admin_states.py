@@ -60,7 +60,20 @@ class AdminServers(StatesGroup):
     add_login = State()
     add_password = State()
     add_flow = State()
+    add_is_bypass = State()
+    add_traffic_limit = State()
+    add_gateway_host = State()
+    add_gateway_port = State()
     add_confirm = State()
+
+    change_is_bypass = State()
+    change_is_bypass_confirm = State()
+    change_traffic_limit = State()
+    change_traffic_limit_confirm = State()
+    change_gateway_host = State()
+    change_gateway_host_confirm = State()
+    change_gateway_port = State()
+    change_gateway_port_confirm = State()
 
 
 class AdminInst(StatesGroup):

@@ -25,13 +25,31 @@ async def get_sorted_servers(is_test: bool = False):
         stmt = (
             select(ServersOrm, func.count(keys_alias.id).label("used_slots"))
             .outerjoin(keys_alias, ServersOrm.id == keys_alias.server_id)
-            .where(ServersOrm.is_test == is_test)
+            .where(ServersOrm.is_test == is_test, ServersOrm.is_bypass == False)
             .group_by(ServersOrm.id)
             .order_by((ServersOrm.max_users - func.count(keys_alias.id)).desc())
         )
         result = await session.execute(stmt)
         servers = result.all()
         logger.debug(f"Getting sort servers: {servers}")
+        return servers
+
+
+async def get_bypass_servers():
+    """Получение bypass серверов, отсортированных по свободным слотам"""
+    async with AsyncSessionLocal() as session:
+        keys_alias = aliased(KeysOrm)
+
+        stmt = (
+            select(ServersOrm, func.count(keys_alias.id).label("used_slots"))
+            .outerjoin(keys_alias, ServersOrm.id == keys_alias.server_id)
+            .where(ServersOrm.is_bypass == True)
+            .group_by(ServersOrm.id)
+            .order_by((ServersOrm.max_users - func.count(keys_alias.id)).desc())
+        )
+        result = await session.execute(stmt)
+        servers = result.all()
+        logger.debug(f"Getting bypass servers: {servers}")
         return servers
 
 
@@ -77,7 +95,16 @@ async def delete_server(server_id: int):
             logger.debug(f"Delete server: {result.scalar()}")
 
 
-async def add_server(address: str, login: str, password: str, flow_enabled: bool = True):
+async def add_server(
+    address: str,
+    login: str,
+    password: str,
+    flow_enabled: bool = True,
+    is_bypass: bool = False,
+    traffic_limit_gb: int | None = None,
+    gateway_host: str | None = None,
+    gateway_port: int | None = None,
+):
     """Создание нового сервера в бд"""
     async with AsyncSessionLocal() as session:
         async with session.begin():
@@ -87,7 +114,12 @@ async def add_server(address: str, login: str, password: str, flow_enabled: bool
                 password=password,
                 max_users=20,
                 is_test=False,
-                flow_enabled=flow_enabled)
+                flow_enabled=flow_enabled,
+                is_bypass=is_bypass,
+                traffic_limit_gb=traffic_limit_gb,
+                gateway_host=gateway_host,
+                gateway_port=gateway_port,
+            )
             session.add(new_server)
             await session.flush()
             logger.debug(f"Add new server: {new_server}")

@@ -7,7 +7,7 @@ from src.database.crud.keys import add_new_key, get_device_last_id, get_key_by_i
     update_key_transfer, get_all_keys_server
 from src.database.crud.promo import activate_promo
 from src.database.crud.payments import is_key_issued, mark_key_issued, mark_payment_as_error
-from src.database.crud.servers import get_sorted_servers, get_server_by_id
+from src.database.crud.servers import get_sorted_servers, get_server_by_id, get_bypass_servers
 from src.database.models import TariffsOrm, ServersOrm, PaymentsOrm
 from src.keyboards.reply_user import get_start_menu
 from src.logs import getLogger
@@ -106,6 +106,70 @@ async def create_key(bot: Bot, user_id: int, finish_date: datetime, tariff_id: i
     logger.info(f"Был создан новый ключ: {new_key}\nХост: {server.host}\nМаксимум слотов: {server.max_users}\nЗанято: {int(used_slots) + 1}")
     
     return new_key  # Возвращаем созданный ключ для атомарной обработки
+
+
+@create_key_dec
+async def create_bypass_key(bot: Bot, user_id: int, finish_date: datetime, device: str = None):
+    """Создание bypass ключа: ключ создаётся на bypass-сервере, но IP:PORT заменяется на gateway."""
+    from urllib.parse import urlparse, urlunparse
+
+    servers = await get_bypass_servers()
+    if not servers:
+        raise RuntimeError("No bypass servers available")
+
+    server, used_slots = servers[0]
+    free_slots = server.max_users - used_slots
+    logger.debug(f"Create_bypass_key - server: {server.host} | used_slots: {used_slots} | free_slots: {free_slots}")
+
+    if free_slots <= 0:
+        text = f"⚠️ Не хватает bypass серверов.\n\nВыбранный сервер:\nХост: {server.host}\nМаксимум слотов: {server.max_users}\nЗанято: {int(used_slots) + 1}"
+        await send_admins_message(bot=bot, text=text)
+
+    device = device or "unknown"
+    device_id = await get_device_last_id(user_id, device)
+    name = f'{settings.prefix}_bypass_{user_id}_{device}_{device_id}'
+
+    days = (finish_date - datetime.now()).days
+
+    x3_class = X3UI(server=server)
+    create_resp = x3_class.create_key(name, days, traffic_limit_gb=server.traffic_limit_gb)
+    if not create_resp or create_resp.status_code != 200:
+        status = getattr(create_resp, "status_code", None)
+        body = (getattr(create_resp, "text", "") or "")[:200]
+        raise RuntimeError(
+            f"Create bypass key failed for user_id={user_id} on server={server.host}: "
+            f"HTTP {status} body={body}"
+        )
+
+    key_url = x3_class.get_key(name)
+    if not key_url:
+        raise RuntimeError(
+            f"Create bypass key failed for user_id={user_id} on server={server.host}: empty key data"
+        )
+
+    # Заменяем IP:PORT сервера A на адрес шлюза (сервер Б)
+    if server.gateway_host and server.gateway_port:
+        parsed = urlparse(key_url)
+        userinfo = parsed.netloc.split('@')[0]
+        new_netloc = f"{userinfo}@{server.gateway_host}:{server.gateway_port}"
+        key_url = urlunparse(parsed._replace(netloc=new_netloc))
+
+    new_key = await add_new_key(
+        user_id=user_id,
+        server_id=server.id,
+        key=key_url,
+        device=device,
+        finish=finish_date,
+        name=name,
+        is_test=False,
+        is_bypass=True,
+    )
+
+    await send_notification_to_user(bot, user_id, f"Bypass ключ 🛡{settings.prefix}_bypass_{device}{device_id} создан:")
+    await send_notification_to_user(bot, user_id, key_url)
+
+    logger.info(f"Создан bypass ключ: {new_key} | Хост: {server.host} | Шлюз: {server.gateway_host}:{server.gateway_port}")
+    return new_key
 
 
 async def prolong_key(bot: Bot, user_id: int, tariff: TariffsOrm, key_id: int, _admin_days: int = None, promo=None):

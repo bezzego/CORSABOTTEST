@@ -281,6 +281,16 @@ def get_edit_server_buttons(server_id: int, page: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="Изменить flow xtls-rprx-vision", callback_data=EditServers(action="change_flow", server_id=server_id, page=page).pack())
         ],
         [
+            InlineKeyboardButton(text="Обход белых списков (вкл/выкл)", callback_data=EditServers(action="change_is_bypass", server_id=server_id, page=page).pack())
+        ],
+        [
+            InlineKeyboardButton(text="Лимит трафика (ГБ)", callback_data=EditServers(action="change_traffic_limit", server_id=server_id, page=page).pack()),
+            InlineKeyboardButton(text="Адрес шлюза", callback_data=EditServers(action="change_gateway_host", server_id=server_id, page=page).pack()),
+        ],
+        [
+            InlineKeyboardButton(text="Порт шлюза", callback_data=EditServers(action="change_gateway_port", server_id=server_id, page=page).pack()),
+        ],
+        [
             InlineKeyboardButton(text="Назад", callback_data=EditServers(action="back", server_id=server_id, page=page).pack())
         ],
     ]

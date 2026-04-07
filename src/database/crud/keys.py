@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import desc, select
 
@@ -35,6 +35,7 @@ async def add_new_key(
     name: str,
     is_test: bool,
     payment_id: int = None,
+    is_bypass: bool = False,
 ):
     """Создание ключа в БД и синхронизация уведомлений по правилам A–D."""
     async with AsyncSessionLocal() as session:
@@ -49,6 +50,7 @@ async def add_new_key(
                 finish=finish,
                 name=name,
                 is_test=is_test,
+                is_bypass=is_bypass,
             )
             session.add(new_key)
             logger.debug("Created new Key: %s", new_key)
@@ -95,6 +97,21 @@ async def get_key_by_payment_id(payment_id: int) -> KeysOrm | None:
             select(KeysOrm).where(KeysOrm.payment_id == payment_id)
         )
         return result.scalar_one_or_none()
+
+
+async def get_user_active_keys(user_id: int) -> list[KeysOrm]:
+    """Активные (не bypass, не истекшие) ключи пользователя."""
+    async with AsyncSessionLocal() as session:
+        now = datetime.now(timezone.utc)
+        result = await session.execute(
+            select(KeysOrm).where(
+                KeysOrm.user_id == user_id,
+                KeysOrm.is_bypass == False,
+                KeysOrm.active == True,
+                KeysOrm.finish > now,
+            )
+        )
+        return result.scalars().all()
 
 
 async def get_all_keys_server(server_id: int) -> list[KeysOrm]:

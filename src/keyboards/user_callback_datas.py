@@ -22,3 +22,8 @@ class MyKeys(CallbackData, prefix="my_keys"):
     button_type: str
     key_id: None | int
     page: int
+
+
+class BypassKey(CallbackData, prefix="bypass_key"):
+    action: str
+    device: None | str = None

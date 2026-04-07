@@ -128,6 +128,10 @@ class ServersOrm(Base):
     max_users: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
     is_test: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     flow_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_bypass: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    traffic_limit_gb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    gateway_host: Mapped[str | None] = mapped_column(String, nullable=True)
+    gateway_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class KeysOrm(Base):
@@ -144,6 +148,7 @@ class KeysOrm(Base):
     finish: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     is_test: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    is_bypass: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     @property
     def time_left(self) -> dict:

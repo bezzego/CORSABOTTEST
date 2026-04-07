@@ -23,3 +23,8 @@ class TestSubState(StatesGroup):
 
 class EmailState(StatesGroup):
     waiting_for_email = State()
+
+
+class BypassKeyState(StatesGroup):
+    select_device = State()
+    create_key = State()

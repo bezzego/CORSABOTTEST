@@ -7,15 +7,16 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from src.database.crud import get_text_settings, get_user
-from src.database.crud.keys import get_user_keys
+from src.database.crud.keys import get_user_keys, get_user_active_keys
+from src.database.crud.servers import get_bypass_servers
 from src.database.crud.users import update_user_email
 from src.handlers.user_handlers.func_create_menu import create_menu_tariffs, create_start_menu
 from src.keyboards.inline_user import get_select_device_buttons, get_inline_markup_with_url, \
     edit_inline_keyboard_select_device, get_inline_markup_my_keys
-from src.keyboards.user_callback_datas import VideoInstruction, TestSub
+from src.keyboards.user_callback_datas import VideoInstruction, TestSub, BypassKey
 from src.keyboards.reply_user import get_reply_user_btn
-from src.services.keys_manager import create_key
-from src.states.user_states import TestSubState, EmailState
+from src.services.keys_manager import create_key, create_bypass_key
+from src.states.user_states import TestSubState, EmailState, BypassKeyState
 from src.utils.utils_async import auth_user_role, update_inline_reply_markup, check_have_servers, show_device_inst
 from src.logs import getLogger
 
@@ -142,6 +143,53 @@ async def cmd_test_sub(message: Message, user, state: FSMContext, admin_role: Op
 
         await state.set_state(TestSubState.select_device)
         await state.update_data(user_obj=user)
+
+"""───────────────────────────────────────────── Bypass Key ─────────────────────────────────────────────"""
+
+
+@router.message(F.text == get_reply_user_btn("bypass"))
+@auth_user_role
+async def cmd_bypass_key(message: Message, state: FSMContext):
+    bypass_servers = await get_bypass_servers()
+    if not bypass_servers:
+        await message.answer("Функция временно недоступна.")
+        return
+
+    active_keys = await get_user_active_keys(message.from_user.id)
+    if not active_keys:
+        await message.answer(
+            text="Эта функция доступна только пользователям с активным ключом.",
+            parse_mode=ParseMode.HTML)
+        return
+
+    finish_date = max(k.finish for k in active_keys)
+    await message.answer(
+        text="Выберите тип устройства для ключа обхода белых списков:",
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_select_device_buttons(BypassKey))
+
+    await state.set_state(BypassKeyState.select_device)
+    await state.update_data(finish_date=finish_date)
+
+
+@router.callback_query(BypassKey.filter(F.action == "select_device"), BypassKeyState.select_device)
+async def clb_bypass_key_select_device(callback: CallbackQuery, callback_data: BypassKey, state: FSMContext):
+    await callback.answer()
+    await state.set_state(BypassKeyState.create_key)
+
+    state_data = await state.get_data()
+    finish_date = state_data["finish_date"]
+
+    await update_inline_reply_markup(callback, edit_inline_keyboard_select_device)
+
+    await create_bypass_key(
+        bot=callback.bot,
+        user_id=callback.from_user.id,
+        finish_date=finish_date,
+        device=callback_data.device)
+
+    await state.clear()
+
 
 """───────────────────────────────────────────── Callbacks Video Inst ─────────────────────────────────────────────"""
 

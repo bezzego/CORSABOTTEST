@@ -152,14 +152,14 @@ class X3UI:
             )
             return {}
 
-    def _client_dict(self, key_name, x_time, enable, client_id=None):
+    def _client_dict(self, key_name, x_time, enable, client_id=None, traffic_limit_gb=None):
         """Собирает словарь клиента для панели. flow добавляется только если у сервера flow_enabled=True."""
         d = {
             "id": client_id or str(uuid.uuid1()),
             "alterId": 90,
             "email": str(key_name),
             "limitIp": 1,
-            "totalGB": 0,
+            "totalGB": traffic_limit_gb * 1024 * 1024 * 1024 if traffic_limit_gb else 0,
             "expiryTime": x_time,
             "enable": enable,
             "tgId": str(key_name),
@@ -169,12 +169,12 @@ class X3UI:
             d["flow"] = "xtls-rprx-vision"
         return d
 
-    def create_key(self, key_name, days):
+    def create_key(self, key_name, days, traffic_limit_gb=None):
         epoch = datetime.datetime.utcfromtimestamp(0)
         x_time = int((datetime.datetime.now() - epoch).total_seconds() * 1000)
         x_time += 86400000 * (days + 1) - 10800000
 
-        client = self._client_dict(key_name, x_time, True)
+        client = self._client_dict(key_name, x_time, True, traffic_limit_gb=traffic_limit_gb)
         data = {
             "id": self.inbound_id,
             "settings": json.dumps({"clients": [client]})

@@ -38,6 +38,13 @@ async def show_server(server_id: int, callback: CallbackQuery, reply_markup=None
     keys_count = await get_all_keys_server(server_id)
     if server:
         await callback.answer()
+        bypass_info = ""
+        if server.is_bypass:
+            bypass_info = (
+                f"\nЛимит трафика: <code>{server.traffic_limit_gb} ГБ</code>"
+                f"\nШлюз (адрес): <code>{server.gateway_host}</code>"
+                f"\nШлюз (порт): <code>{server.gateway_port}</code>"
+            )
         return await callback.message.answer(
             text=f"""
 ID: <code>{server.id}</code>
@@ -48,6 +55,7 @@ ID: <code>{server.id}</code>
 Ключей на сервере: <code>{len(keys_count)}</code>
 Тестовый: <code>{server.is_test}</code>
 flow xtls-rprx-vision: <code>{server.flow_enabled}</code>
+Обход белых списков: <code>{server.is_bypass}</code>{bypass_info}
 """,
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup)
@@ -139,7 +147,9 @@ async def clb_cancel(callback: CallbackQuery, callback_data: EditServers):
 
 @router.callback_query(EditServers.filter(F.action == "cancel_change"), StateFilter(
     AdminServers.change_address_confirm, AdminServers.change_login_confirm, AdminServers.change_password_confirm,
-    AdminServers.change_max_users_confirm, AdminServers.change_test_confirm, AdminServers.change_flow_confirm))
+    AdminServers.change_max_users_confirm, AdminServers.change_test_confirm, AdminServers.change_flow_confirm,
+    AdminServers.change_is_bypass_confirm, AdminServers.change_traffic_limit_confirm,
+    AdminServers.change_gateway_host_confirm, AdminServers.change_gateway_port_confirm))
 async def clb_change_cancel(callback: CallbackQuery, callback_data: EditServers, state: FSMContext):
     await callback.answer()
     await callback.message.answer("Успешно, отмена изменений!")
@@ -433,6 +443,186 @@ async def clb_change_flow_confirm(callback: CallbackQuery, callback_data: EditSe
     await state.set_state(AdminServers.edit)
 
 
+"""───────────────────────────────────────────── Callbacks Edit Bypass Fields ─────────────────────────────────────────────"""
+
+
+@router.callback_query(EditServers.filter(F.action == "change_is_bypass"))
+async def clb_change_is_bypass(callback: CallbackQuery, callback_data: EditServers, state: FSMContext):
+    await callback.answer()
+    await callback.message.answer(
+        text="Включить обход белых списков для этого сервера? (введите <code>да</code>/<code>нет</code>)",
+        parse_mode=ParseMode.HTML)
+    await state.set_state(AdminServers.change_is_bypass)
+    await state.update_data(callback_data=callback_data)
+
+
+@router.message(AdminServers.change_is_bypass)
+async def get_text_change_is_bypass(message: Message, state: FSMContext):
+    try:
+        text = message.text.strip().lower()
+        if text not in ("yes", "no", "да", "нет", "y", "n", "+", "-"):
+            await message.answer("Ошибка! Введите да/нет, попробуйте снова.")
+            return
+
+        is_bypass = text in ("yes", "да", "y", "+")
+        state_data = await state.get_data()
+        callback_data = state_data["callback_data"]
+        await message.answer(
+            text=f"Вы уверены что хотите {'включить' if is_bypass else 'выключить'} обход белых списков?",
+            reply_markup=get_confirm_buttons(EditServers, server_id=callback_data.server_id, page=callback_data.page))
+
+        await state.set_state(AdminServers.change_is_bypass_confirm)
+        await state.update_data(new_is_bypass=is_bypass)
+
+    except Exception as e:
+        await message.answer(f"Error:\n{e}")
+        logger.error(e, exc_info=True)
+        await state.clear()
+
+
+@router.callback_query(EditServers.filter(F.action == "confirm_change"), AdminServers.change_is_bypass_confirm)
+async def clb_change_is_bypass_confirm(callback: CallbackQuery, callback_data: EditServers, state: FSMContext):
+    state_data = await state.get_data()
+    await change_server_value(int(callback_data.server_id), is_bypass=state_data["new_is_bypass"])
+    await callback.answer()
+    await callback.message.answer(
+        text=f"Успешно! Обход белых списков: <code>{state_data['new_is_bypass']}</code>",
+        parse_mode=ParseMode.HTML)
+    await show_servers(callback.message)
+    await state.set_state(AdminServers.edit)
+
+
+@router.callback_query(EditServers.filter(F.action == "change_traffic_limit"))
+async def clb_change_traffic_limit(callback: CallbackQuery, callback_data: EditServers, state: FSMContext):
+    await callback.answer()
+    await callback.message.answer(
+        text="Введите новый лимит трафика в ГБ (целое число):")
+    await state.set_state(AdminServers.change_traffic_limit)
+    await state.update_data(callback_data=callback_data)
+
+
+@router.message(AdminServers.change_traffic_limit)
+async def get_text_change_traffic_limit(message: Message, state: FSMContext):
+    try:
+        if not message.text.strip().isdigit():
+            await message.answer("Ошибка! Введите целое число (ГБ), попробуйте снова.")
+            return
+
+        state_data = await state.get_data()
+        callback_data = state_data["callback_data"]
+        new_limit = int(message.text.strip())
+        await message.answer(
+            text=f"Вы уверены что хотите установить лимит трафика: <code>{new_limit} ГБ</code>?",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_confirm_buttons(EditServers, server_id=callback_data.server_id, page=callback_data.page))
+
+        await state.set_state(AdminServers.change_traffic_limit_confirm)
+        await state.update_data(new_traffic_limit=new_limit)
+
+    except Exception as e:
+        await message.answer(f"Error:\n{e}")
+        logger.error(e, exc_info=True)
+        await state.clear()
+
+
+@router.callback_query(EditServers.filter(F.action == "confirm_change"), AdminServers.change_traffic_limit_confirm)
+async def clb_change_traffic_limit_confirm(callback: CallbackQuery, callback_data: EditServers, state: FSMContext):
+    state_data = await state.get_data()
+    await change_server_value(int(callback_data.server_id), traffic_limit_gb=state_data["new_traffic_limit"])
+    await callback.answer()
+    await callback.message.answer(
+        text=f"Успешно! Лимит трафика: <code>{state_data['new_traffic_limit']} ГБ</code>",
+        parse_mode=ParseMode.HTML)
+    await show_servers(callback.message)
+    await state.set_state(AdminServers.edit)
+
+
+@router.callback_query(EditServers.filter(F.action == "change_gateway_host"))
+async def clb_change_gateway_host(callback: CallbackQuery, callback_data: EditServers, state: FSMContext):
+    await callback.answer()
+    await callback.message.answer(
+        text="Введите новый адрес шлюза (IP или домен):")
+    await state.set_state(AdminServers.change_gateway_host)
+    await state.update_data(callback_data=callback_data)
+
+
+@router.message(AdminServers.change_gateway_host)
+async def get_text_change_gateway_host(message: Message, state: FSMContext):
+    try:
+        state_data = await state.get_data()
+        callback_data = state_data["callback_data"]
+        new_host = message.text.strip()
+        await message.answer(
+            text=f"Вы уверены что хотите установить адрес шлюза: <code>{new_host}</code>?",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_confirm_buttons(EditServers, server_id=callback_data.server_id, page=callback_data.page))
+
+        await state.set_state(AdminServers.change_gateway_host_confirm)
+        await state.update_data(new_gateway_host=new_host)
+
+    except Exception as e:
+        await message.answer(f"Error:\n{e}")
+        logger.error(e, exc_info=True)
+        await state.clear()
+
+
+@router.callback_query(EditServers.filter(F.action == "confirm_change"), AdminServers.change_gateway_host_confirm)
+async def clb_change_gateway_host_confirm(callback: CallbackQuery, callback_data: EditServers, state: FSMContext):
+    state_data = await state.get_data()
+    await change_server_value(int(callback_data.server_id), gateway_host=state_data["new_gateway_host"])
+    await callback.answer()
+    await callback.message.answer(
+        text=f"Успешно! Адрес шлюза: <code>{state_data['new_gateway_host']}</code>",
+        parse_mode=ParseMode.HTML)
+    await show_servers(callback.message)
+    await state.set_state(AdminServers.edit)
+
+
+@router.callback_query(EditServers.filter(F.action == "change_gateway_port"))
+async def clb_change_gateway_port(callback: CallbackQuery, callback_data: EditServers, state: FSMContext):
+    await callback.answer()
+    await callback.message.answer(
+        text="Введите новый порт шлюза (целое число):")
+    await state.set_state(AdminServers.change_gateway_port)
+    await state.update_data(callback_data=callback_data)
+
+
+@router.message(AdminServers.change_gateway_port)
+async def get_text_change_gateway_port(message: Message, state: FSMContext):
+    try:
+        if not message.text.strip().isdigit():
+            await message.answer("Ошибка! Введите целое число (порт), попробуйте снова.")
+            return
+
+        state_data = await state.get_data()
+        callback_data = state_data["callback_data"]
+        new_port = int(message.text.strip())
+        await message.answer(
+            text=f"Вы уверены что хотите установить порт шлюза: <code>{new_port}</code>?",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_confirm_buttons(EditServers, server_id=callback_data.server_id, page=callback_data.page))
+
+        await state.set_state(AdminServers.change_gateway_port_confirm)
+        await state.update_data(new_gateway_port=new_port)
+
+    except Exception as e:
+        await message.answer(f"Error:\n{e}")
+        logger.error(e, exc_info=True)
+        await state.clear()
+
+
+@router.callback_query(EditServers.filter(F.action == "confirm_change"), AdminServers.change_gateway_port_confirm)
+async def clb_change_gateway_port_confirm(callback: CallbackQuery, callback_data: EditServers, state: FSMContext):
+    state_data = await state.get_data()
+    await change_server_value(int(callback_data.server_id), gateway_port=state_data["new_gateway_port"])
+    await callback.answer()
+    await callback.message.answer(
+        text=f"Успешно! Порт шлюза: <code>{state_data['new_gateway_port']}</code>",
+        parse_mode=ParseMode.HTML)
+    await show_servers(callback.message)
+    await state.set_state(AdminServers.edit)
+
+
 """───────────────────────────────────────────── Callbacks Delete Tariff ─────────────────────────────────────────────"""
 
 
@@ -513,10 +703,108 @@ async def get_text_add_flow(message: Message, state: FSMContext):
 
         flow_enabled = text in ("yes", "да", "y", "+")
         await state.update_data(flow_enabled=flow_enabled)
-        state_data = await state.get_data()
 
         await message.answer(
-            text=f"""
+            text="Это сервер для обхода белых списков? (введите <code>да</code>/<code>нет</code>)",
+            parse_mode=ParseMode.HTML)
+        await state.set_state(AdminServers.add_is_bypass)
+
+    except Exception as e:
+        await message.answer(f"Error:\n{e}")
+        logger.error(e, exc_info=True)
+        await state.clear()
+
+
+@router.message(AdminServers.add_is_bypass)
+async def get_text_add_is_bypass(message: Message, state: FSMContext):
+    try:
+        text = message.text.strip().lower()
+        if text not in ("yes", "no", "да", "нет", "y", "n", "+", "-"):
+            await message.answer("Ошибка! Введите да/нет, попробуйте снова.")
+            return
+
+        is_bypass = text in ("yes", "да", "y", "+")
+        await state.update_data(is_bypass=is_bypass)
+
+        if is_bypass:
+            await message.answer(
+                text="Введите лимит трафика в ГБ (целое число, например <code>10</code>):",
+                parse_mode=ParseMode.HTML)
+            await state.set_state(AdminServers.add_traffic_limit)
+        else:
+            await _show_add_server_confirm(message, state)
+
+    except Exception as e:
+        await message.answer(f"Error:\n{e}")
+        logger.error(e, exc_info=True)
+        await state.clear()
+
+
+@router.message(AdminServers.add_traffic_limit)
+async def get_text_add_traffic_limit(message: Message, state: FSMContext):
+    try:
+        if not message.text.strip().isdigit():
+            await message.answer("Ошибка! Введите целое число (ГБ), попробуйте снова.")
+            return
+
+        await state.update_data(traffic_limit_gb=int(message.text.strip()))
+        await message.answer(
+            text="Введите адрес шлюза (IP или домен сервера Б, например <code>1.2.3.4</code>):",
+            parse_mode=ParseMode.HTML)
+        await state.set_state(AdminServers.add_gateway_host)
+
+    except Exception as e:
+        await message.answer(f"Error:\n{e}")
+        logger.error(e, exc_info=True)
+        await state.clear()
+
+
+@router.message(AdminServers.add_gateway_host)
+async def get_text_add_gateway_host(message: Message, state: FSMContext):
+    try:
+        await state.update_data(gateway_host=message.text.strip())
+        await message.answer(
+            text="Введите порт шлюза (целое число, например <code>443</code>):",
+            parse_mode=ParseMode.HTML)
+        await state.set_state(AdminServers.add_gateway_port)
+
+    except Exception as e:
+        await message.answer(f"Error:\n{e}")
+        logger.error(e, exc_info=True)
+        await state.clear()
+
+
+@router.message(AdminServers.add_gateway_port)
+async def get_text_add_gateway_port(message: Message, state: FSMContext):
+    try:
+        if not message.text.strip().isdigit():
+            await message.answer("Ошибка! Введите целое число (порт), попробуйте снова.")
+            return
+
+        await state.update_data(gateway_port=int(message.text.strip()))
+        await _show_add_server_confirm(message, state)
+
+    except Exception as e:
+        await message.answer(f"Error:\n{e}")
+        logger.error(e, exc_info=True)
+        await state.clear()
+
+
+async def _show_add_server_confirm(message: Message, state: FSMContext):
+    """Показывает итоговый экран подтверждения создания сервера."""
+    state_data = await state.get_data()
+    flow_enabled = state_data.get("flow_enabled", True)
+    is_bypass = state_data.get("is_bypass", False)
+    bypass_info = ""
+    if is_bypass:
+        bypass_info = (
+            f"\nЛимит трафика: <b>{state_data.get('traffic_limit_gb')} ГБ</b>"
+            f"\nАдрес шлюза: <b>{state_data.get('gateway_host')}</b>"
+            f"\nПорт шлюза: <b>{state_data.get('gateway_port')}</b>"
+        )
+
+    await message.answer(
+        text=f"""
 <b>Создание нового сервера:</b>
 
 Адрес: <b>{state_data['address']}</b>
@@ -525,17 +813,13 @@ async def get_text_add_flow(message: Message, state: FSMContext):
 Максимум ключей: <b>20</b>
 Тестовый режим: <b>Выключен</b>
 flow xtls-rprx-vision: <b>{'Включен' if flow_enabled else 'Выключен'}</b>
+Обход белых списков: <b>{'Да' if is_bypass else 'Нет'}</b>{bypass_info}
 
 Создать сервер с вышеуказанными параметрами?""",
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_confirm_buttons(AddServer, address="confirm", login=state_data['login'], password=state_data['password']))
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_confirm_buttons(AddServer, address="confirm", login=state_data['login'], password=state_data['password']))
 
-        await state.set_state(AdminServers.add_confirm)
-
-    except Exception as e:
-        await message.answer(f"Error:\n{e}")
-        logger.error(e, exc_info=True)
-        await state.clear()
+    await state.set_state(AdminServers.add_confirm)
 
 
 @router.callback_query(AddServer.filter(F.action == "confirm_change"), AdminServers.add_confirm)
@@ -545,7 +829,12 @@ async def clb_create_server_confirm(callback: CallbackQuery, callback_data: AddS
         data["address"],
         data["login"],
         data["password"],
-        flow_enabled=data.get("flow_enabled", True))
+        flow_enabled=data.get("flow_enabled", True),
+        is_bypass=data.get("is_bypass", False),
+        traffic_limit_gb=data.get("traffic_limit_gb"),
+        gateway_host=data.get("gateway_host"),
+        gateway_port=data.get("gateway_port"),
+    )
     await callback.answer()
     await callback.message.answer(
         text=f"Успешно! Сервер был создан",
