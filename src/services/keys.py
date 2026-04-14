@@ -298,6 +298,44 @@ class X3UI:
         path = f"/panel/api/inbounds/{self.inbound_id}/delClient/{user_id}"
         return self._request("post", path, headers=self.header, json=self.data)
 
+    def reset_client_traffic(self, key_name: str) -> bool:
+        """Сбрасывает счётчик трафика клиента на панели. Возвращает True при успехе."""
+        self.auth()
+        path = f"/panel/api/inbounds/{self.inbound_id}/resetClientTraffic/{key_name}"
+        try:
+            response = self._request("post", path, headers=self.header)
+            if response and response.status_code == 200:
+                return True
+            logger.warning(
+                "reset_client_traffic: HTTP %s for key=%s",
+                getattr(response, "status_code", None),
+                key_name,
+            )
+            return False
+        except Exception:
+            logger.error("reset_client_traffic failed for key=%s", key_name, exc_info=True)
+            return False
+
+    def get_client_traffic(self, key_name: str) -> dict | None:
+        """Возвращает статистику трафика клиента: {'up': bytes, 'down': bytes, 'total': bytes}.
+        Возвращает None если клиент не найден или запрос не удался."""
+        try:
+            data = self.users_list()
+            obj = data.get("obj") or []
+            if not obj:
+                return None
+            for entry in obj[0].get("clientStats") or []:
+                if str(entry.get("email")) == str(key_name):
+                    return {
+                        "up": entry.get("up", 0),
+                        "down": entry.get("down", 0),
+                        "total": entry.get("total", 0),
+                    }
+            return None
+        except Exception:
+            logger.error("get_client_traffic failed for key=%s", key_name, exc_info=True)
+            return None
+
     def get_key(self, key_name: str):
         users = self.users_list().get("obj", [])
         if not users:

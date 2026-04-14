@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from aiogram import Bot
 from aiogram.enums import ParseMode
@@ -250,6 +250,34 @@ async def prolong_key(bot: Bot, user_id: int, tariff: TariffsOrm, key_id: int, _
         raise  # Пробрасываем исключение дальше
 
 
+async def extend_bypass_key_if_exists(bot: Bot, user_id: int, new_finish: datetime) -> None:
+    """Тихо продлевает все активные bypass-ключи пользователя до new_finish.
+    Никогда не бросает исключений — ошибки только логируются."""
+    from src.database.crud.keys import get_user_active_bypass_keys
+
+    try:
+        new_finish_utc = new_finish if new_finish.tzinfo else new_finish.replace(tzinfo=timezone.utc)
+        bypass_keys = await get_user_active_bypass_keys(user_id)
+        for bypass_key in bypass_keys:
+            bypass_finish = bypass_key.finish if bypass_key.finish.tzinfo else bypass_key.finish.replace(tzinfo=timezone.utc)
+            if bypass_finish >= new_finish_utc:
+                continue  # Уже покрывает период
+            try:
+                server = await get_server_by_id(bypass_key.server_id)
+                if not server:
+                    logger.warning("extend_bypass_key_if_exists: server %s not found for key_id=%s", bypass_key.server_id, bypass_key.id)
+                    continue
+                bypass_key.finish = new_finish
+                await update_key(bypass_key)
+                days = (new_finish - datetime.now()).days
+                X3UI(server).turn_on_user(bypass_key.name, days)
+                logger.info("Extended bypass key_id=%s for user_id=%s to %s", bypass_key.id, user_id, new_finish)
+            except Exception:
+                logger.error("extend_bypass_key_if_exists: failed to extend key_id=%s", bypass_key.id, exc_info=True)
+    except Exception:
+        logger.error("extend_bypass_key_if_exists: unexpected error for user_id=%s", user_id, exc_info=True)
+
+
 async def check_connection(server: ServersOrm):
     try:
         x3_class = X3UI(server)
@@ -459,6 +487,8 @@ async def process_success_payment(bot, payment: PaymentsOrm):
         if created_key:
             await mark_key_issued(payment.id, key_id=created_key.id)
             logger.info(f"Payment {payment.label} successfully processed, key issued (key_id={created_key.id})")
+            if not created_key.is_bypass:
+                await extend_bypass_key_if_exists(bot, payment.user_id, created_key.finish)
         else:
             raise RuntimeError(f"Key was not created/prolonged for payment {payment.label}")
         

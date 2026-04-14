@@ -11,8 +11,8 @@ from src.logs import getLogger
 logger = getLogger(__name__)
 
 
-async def get_key_stats(key_id: int) -> str:
-    """Возвращает статистику ключа ключа"""
+async def get_key_stats(key_id: int, include_traffic: bool = False) -> str:
+    """Возвращает статистику ключа. Если include_traffic=True и ключ bypass — добавляет данные по трафику с панели."""
     key = await get_key_by_id(key_id)
     now = datetime.now(timezone.utc)
     finish = key.finish if key.finish.tzinfo else key.finish.replace(tzinfo=timezone.utc)
@@ -20,11 +20,30 @@ async def get_key_stats(key_id: int) -> str:
     if finish >= now:
         ts = (finish - now).total_seconds()
         days, hours, minutes = get_days_hours_by_ts(ts)
-        return f"🔑{get_key_name_without_user_id(key)} Осталось: {days} дн. {hours} ч. {minutes} м."
+        base = f"🔑{get_key_name_without_user_id(key)} Осталось: {days} дн. {hours} ч. {minutes} м."
+    else:
+        ts = (now - finish).total_seconds()
+        days, hours, minutes = get_days_hours_by_ts(ts)
+        base = f"🔑{get_key_name_without_user_id(key)} Истек: {days} дн. {hours} ч. {minutes} м. назад"
 
-    ts = (now - finish).total_seconds()
-    days, hours, minutes = get_days_hours_by_ts(ts)
-    return f"🔑{get_key_name_without_user_id(key)} Истек: {days} дн. {hours} ч. {minutes} м. назад"
+    if not include_traffic or not key.is_bypass:
+        return base
+
+    try:
+        from src.database.crud.servers import get_server_by_id
+        from src.services.keys import X3UI
+        server = await get_server_by_id(key.server_id)
+        if server:
+            traffic = X3UI(server).get_client_traffic(key.name)
+            if traffic and traffic["total"] > 0:
+                used_gb = (traffic["up"] + traffic["down"]) / 1024 ** 3
+                limit_gb = traffic["total"] / 1024 ** 3
+                remaining_gb = max(0.0, limit_gb - used_gb)
+                return base + f"\nТрафик: {used_gb:.1f} GB из {limit_gb:.1f} GB (осталось {remaining_gb:.1f} GB)"
+    except Exception:
+        logger.warning("get_key_stats: не удалось получить трафик для key_id=%s", key_id, exc_info=True)
+
+    return base
 
 
 def get_select_device_buttons(callback_data_model, **kwargs):

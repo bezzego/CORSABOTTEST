@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import desc, select
+from datetime import timedelta
+
+from sqlalchemy import desc, func, select
 
 from src.database.crud.notifications import sync_user_key_rules
 from src.database.database import AsyncSessionLocal
@@ -169,6 +171,45 @@ async def update_key_transfer(key: KeysOrm):
             if ex_key:
                 ex_key.server_id = key.server_id
                 ex_key.key = key.key
+
+
+async def get_user_active_bypass_keys(user_id: int) -> list[KeysOrm]:
+    """Активные bypass-ключи пользователя."""
+    async with AsyncSessionLocal() as session:
+        now = datetime.now(timezone.utc)
+        result = await session.execute(
+            select(KeysOrm).where(
+                KeysOrm.user_id == user_id,
+                KeysOrm.is_bypass == True,
+                KeysOrm.active == True,
+                KeysOrm.finish > now,
+            )
+        )
+        return result.scalars().all()
+
+
+async def get_bypass_keys_due_for_traffic_reset() -> list[KeysOrm]:
+    """Активные bypass-ключи, у которых прошло ≥30 дней с последнего сброса трафика (или с момента создания)."""
+    async with AsyncSessionLocal() as session:
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=30)
+        result = await session.execute(
+            select(KeysOrm).where(
+                KeysOrm.is_bypass == True,
+                KeysOrm.active == True,
+                func.coalesce(KeysOrm.traffic_reset_at, KeysOrm.start) <= cutoff,
+            )
+        )
+        return result.scalars().all()
+
+
+async def update_key_traffic_reset(key_id: int, reset_at: datetime) -> None:
+    """Обновляет traffic_reset_at после успешного сброса трафика на панели."""
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            key = await session.get(KeysOrm, key_id)
+            if key:
+                key.traffic_reset_at = reset_at
 
 
 async def delete_key(key: KeysOrm):

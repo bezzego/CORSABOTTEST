@@ -100,10 +100,37 @@ async def process_pending_payment(bot, payment: PaymentsOrm):
         logger.debug(f"payment still pending: {payment.label}")
 
 
+async def reset_bypass_traffic(bot):
+    """Ежедневная задача: сбрасывает трафик на X3UI для bypass-ключей, у которых прошло ≥30 дней."""
+    from src.database.crud.keys import get_bypass_keys_due_for_traffic_reset, update_key_traffic_reset
+    from src.database.crud.servers import get_server_by_id
+    from src.services.keys import X3UI
+    from datetime import datetime, timezone
+
+    keys = await get_bypass_keys_due_for_traffic_reset()
+    logger.debug("reset_bypass_traffic: found %d keys due for reset", len(keys))
+
+    for key in keys:
+        try:
+            server = await get_server_by_id(key.server_id)
+            if not server:
+                logger.warning("reset_bypass_traffic: server %s not found for key_id=%s", key.server_id, key.id)
+                continue
+            x3 = X3UI(server)
+            if x3.reset_client_traffic(key.name):
+                await update_key_traffic_reset(key.id, datetime.now(timezone.utc))
+                logger.info("reset_bypass_traffic: traffic reset for key_id=%s name=%s", key.id, key.name)
+            else:
+                logger.warning("reset_bypass_traffic: panel reset failed for key_id=%s, will retry next run", key.id)
+        except Exception:
+            logger.error("reset_bypass_traffic: error for key_id=%s", key.id, exc_info=True)
+
+
 async def start_scheduler(bot):
     # Проверка pending платежей каждые 25 секунд
     scheduler.add_job(check_pending_payments, 'interval', seconds=25, args=[bot])
     # Проверка success платежей без ключа каждые 60 секунд (восстановление)
     scheduler.add_job(check_success_payments_without_key, 'interval', seconds=60, args=[bot])
+    scheduler.add_job(reset_bypass_traffic, 'interval', hours=24, args=[bot])
     await notification_service.init(scheduler, bot)
     scheduler.start()

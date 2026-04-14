@@ -33,7 +33,7 @@ async def clb_download_key(callback: CallbackQuery, callback_data: MyKeys):
 
 @router.callback_query(MyKeys.filter(F.button_type == "title"))
 async def clb_title_key(callback: CallbackQuery, callback_data: MyKeys):
-    key_stats_text = await get_key_stats(callback_data.key_id)
+    key_stats_text = await get_key_stats(callback_data.key_id, include_traffic=True)
     await callback.answer()
     await callback.message.answer(
         text=key_stats_text)

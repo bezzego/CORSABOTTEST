@@ -9,8 +9,16 @@ async def init_database():
     async with async_engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
         await _migrate_add_tv_columns(connection)
+        await _migrate_add_traffic_reset_at(connection)
 
     await create_default_settings_rows()
+
+
+async def _migrate_add_traffic_reset_at(connection):
+    """Добавляет колонку traffic_reset_at в keys если её нет"""
+    await connection.execute(text(
+        "ALTER TABLE keys ADD COLUMN IF NOT EXISTS traffic_reset_at TIMESTAMPTZ"
+    ))
 
 
 async def _migrate_add_tv_columns(connection):

@@ -149,6 +149,7 @@ class KeysOrm(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     is_test: Mapped[bool] = mapped_column(Boolean, nullable=False)
     is_bypass: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    traffic_reset_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     @property
     def time_left(self) -> dict:
