@@ -101,6 +101,10 @@ async def create_key(bot: Bot, user_id: int, finish_date: datetime, tariff_id: i
 
     if is_test:
         await notification_service.on_trial_key_created(user_id, new_key.finish)
+        try:
+            await create_bypass_key(bot, user_id, finish_date, device=device, traffic_limit_gb=1)
+        except Exception as e:
+            logger.warning(f"Auto bypass key for trial user {user_id} failed (non-critical): {e}")
     else:
         await notification_service.on_paid_key_created(user_id, new_key.finish)
     logger.info(f"Был создан новый ключ: {new_key}\nХост: {server.host}\nМаксимум слотов: {server.max_users}\nЗанято: {int(used_slots) + 1}")
@@ -109,7 +113,7 @@ async def create_key(bot: Bot, user_id: int, finish_date: datetime, tariff_id: i
 
 
 @create_key_dec
-async def create_bypass_key(bot: Bot, user_id: int, finish_date: datetime, device: str = None):
+async def create_bypass_key(bot: Bot, user_id: int, finish_date: datetime, device: str = None, traffic_limit_gb: int = None):
     """Создание bypass ключа: ключ создаётся на bypass-сервере, но IP:PORT заменяется на gateway."""
     from urllib.parse import urlparse, urlunparse
 
@@ -132,7 +136,8 @@ async def create_bypass_key(bot: Bot, user_id: int, finish_date: datetime, devic
     days = (finish_date - datetime.now()).days
 
     x3_class = X3UI(server=server)
-    create_resp = x3_class.create_key(name, days, traffic_limit_gb=server.traffic_limit_gb)
+    effective_traffic_limit = traffic_limit_gb if traffic_limit_gb is not None else server.traffic_limit_gb
+    create_resp = x3_class.create_key(name, days, traffic_limit_gb=effective_traffic_limit)
     if not create_resp or create_resp.status_code != 200:
         status = getattr(create_resp, "status_code", None)
         body = (getattr(create_resp, "text", "") or "")[:200]
