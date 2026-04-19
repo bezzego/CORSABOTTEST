@@ -7,7 +7,7 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from src.database.crud import get_text_settings, get_user
-from src.database.crud.keys import get_user_keys, get_user_active_keys
+from src.database.crud.keys import get_user_keys, get_user_active_keys, get_user_bypass_key
 from src.database.crud.servers import get_bypass_servers
 from src.database.crud.users import update_user_email
 from src.handlers.user_handlers.func_create_menu import create_menu_tariffs, create_start_menu
@@ -160,6 +160,12 @@ async def cmd_bypass_key(message: Message, state: FSMContext):
         await message.answer(
             text="Эта функция доступна только пользователям с активным ключом.",
             parse_mode=ParseMode.HTML)
+        return
+
+    existing = await get_user_bypass_key(message.from_user.id)
+    if existing:
+        await message.answer(text="Ваш ключ для обхода белых списков 🛡:")
+        await message.answer(text=existing.key)
         return
 
     finish_date = max(k.finish for k in active_keys)

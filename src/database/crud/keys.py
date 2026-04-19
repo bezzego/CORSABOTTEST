@@ -101,6 +101,19 @@ async def get_key_by_payment_id(payment_id: int) -> KeysOrm | None:
         return result.scalar_one_or_none()
 
 
+async def get_user_bypass_key(user_id: int) -> KeysOrm | None:
+    """Активный bypass ключ пользователя (один на пользователя)."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(KeysOrm).where(
+                KeysOrm.user_id == user_id,
+                KeysOrm.is_bypass == True,
+                KeysOrm.active == True,
+            ).order_by(desc(KeysOrm.finish)).limit(1)
+        )
+        return result.scalar_one_or_none()
+
+
 async def get_user_active_keys(user_id: int) -> list[KeysOrm]:
     """Активные (не bypass, не истекшие) ключи пользователя."""
     async with AsyncSessionLocal() as session:
