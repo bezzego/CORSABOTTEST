@@ -255,7 +255,7 @@ class X3UI:
         path = f"/panel/api/inbounds/updateClient/{user_id}"
         return self._request("post", path, headers=self.header, json=data)
 
-    def turn_on_user(self, key_name, days):
+    def turn_on_user(self, key_name, days, traffic_limit_gb=None):
         epoch = datetime.datetime.utcfromtimestamp(0)
         x_time = int((datetime.datetime.now() - epoch).total_seconds() * 1000)
         x_time += 86400000 * (days + 1) - 10800000
@@ -267,12 +267,13 @@ class X3UI:
 
         # При продлении ключа не меняем flow у уже существующего клиента.
         existing = self._get_client_settings(key_name) or {}
+        total_gb = traffic_limit_gb * 1024 * 1024 * 1024 if traffic_limit_gb else existing.get("totalGB", 0)
         client = {
             "id": user_id,
             "alterId": existing.get("alterId", 90),
             "email": existing.get("email", str(key_name)),
             "limitIp": existing.get("limitIp", 1),
-            "totalGB": existing.get("totalGB", 0),
+            "totalGB": total_gb,
             "expiryTime": x_time,
             "enable": True,
             "tgId": existing.get("tgId", str(key_name)),
@@ -289,6 +290,12 @@ class X3UI:
         self.auth()
         path = f"/panel/api/inbounds/updateClient/{user_id}"
         return self._request("post", path, headers=self.header, json=data)
+
+    def reset_client_traffic(self, key_name):
+        """Сбрасывает счётчик использованного трафика клиента на панели."""
+        self.auth()
+        path = f"/panel/api/inbounds/{self.inbound_id}/resetClientTraffic/{key_name}"
+        return self._request("post", path, headers=self.header)
 
     def delete_user(self, key_name):
         self.auth()

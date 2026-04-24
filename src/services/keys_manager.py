@@ -256,7 +256,8 @@ async def prolong_key(bot: Bot, user_id: int, tariff: TariffsOrm, key_id: int, _
 
 
 async def extend_bypass_key_if_exists(bot: Bot, user_id: int, new_finish: datetime) -> None:
-    """Тихо продлевает все активные bypass-ключи пользователя до new_finish.
+    """Тихо продлевает все активные bypass-ключи пользователя до new_finish,
+    обновляет лимит трафика по настройкам сервера и сбрасывает счётчик.
     Никогда не бросает исключений — ошибки только логируются."""
     from src.database.crud.keys import get_user_active_bypass_keys
 
@@ -275,8 +276,15 @@ async def extend_bypass_key_if_exists(bot: Bot, user_id: int, new_finish: dateti
                 bypass_key.finish = new_finish
                 await update_key(bypass_key)
                 days = (new_finish - datetime.now()).days
-                X3UI(server).turn_on_user(bypass_key.name, days)
-                logger.info("Extended bypass key_id=%s for user_id=%s to %s", bypass_key.id, user_id, new_finish)
+                x3 = X3UI(server)
+                # Продлеваем срок с актуальным лимитом трафика из настроек сервера
+                x3.turn_on_user(bypass_key.name, days, traffic_limit_gb=server.traffic_limit_gb)
+                # Сбрасываем счётчик использованного трафика
+                x3.reset_client_traffic(bypass_key.name)
+                logger.info(
+                    "Extended bypass key_id=%s for user_id=%s to %s, traffic reset to %sGB",
+                    bypass_key.id, user_id, new_finish, server.traffic_limit_gb,
+                )
             except Exception:
                 logger.error("extend_bypass_key_if_exists: failed to extend key_id=%s", bypass_key.id, exc_info=True)
     except Exception:
