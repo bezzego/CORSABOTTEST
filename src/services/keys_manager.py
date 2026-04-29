@@ -207,8 +207,7 @@ async def prolong_key(bot: Bot, user_id: int, tariff: TariffsOrm, key_id: int, _
         if key.alerted:
             key.alerted = False
 
-        if key.active:
-            key.active = True
+        key.active = True
 
         await update_key(key)
 
