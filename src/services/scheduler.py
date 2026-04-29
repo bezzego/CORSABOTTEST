@@ -3,9 +3,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta
 from src.database.crud.payments import (
-    get_payments_to_check, 
-    mark_payment_successful, 
+    get_payments_to_check,
+    mark_payment_successful,
     delete_expired_payment,
+    mark_payment_as_error,
     get_success_payments_without_key
 )
 from src.database.models import PaymentsOrm
@@ -92,10 +93,10 @@ async def process_pending_payment(bot, payment: PaymentsOrm):
 
     now_msk = datetime.now(ZoneInfo("Europe/Moscow"))
 
-    # Удаляем только очень старые pending платежи (старше 30 минут), но НЕ помечаем их как успешные
-    if created_at_msk < now_msk - timedelta(minutes=30):
-        await delete_expired_payment(payment)
-        logger.debug(f"payment expired and deleted: {payment.label}")
+    # Через 24 часа без подтверждения помечаем как failed (не удаляем — для ручного восстановления)
+    if created_at_msk < now_msk - timedelta(hours=24):
+        await mark_payment_as_error(payment.id, reason="YooMoney did not confirm payment within 24 hours")
+        logger.warning(f"payment marked as failed after 24h without confirmation: {payment.label} (user_id={payment.user_id})")
     else:
         logger.debug(f"payment still pending: {payment.label}")
 
