@@ -63,6 +63,7 @@ class Config(BaseSettings):
     payments: PaymentsConfig = PaymentsConfig()
     logging: LoggingConfig = LoggingConfig()
     prefix: str = "corsarvpn"
+    owner_id: int = 0
     # флаг для отключения уведомлений о ключах (например для тестов)
     disable_key_notifications: bool = False
 

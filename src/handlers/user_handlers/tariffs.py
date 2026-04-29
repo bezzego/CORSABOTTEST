@@ -12,6 +12,7 @@ from src.keyboards.inline_user import get_select_device_buttons, \
     edit_inline_keyboard_select_tariff, get_buy_tariff_buttons, \
     edit_inline_keyboard_select_device, edit_inline_markup_add_symbol, get_payments_buttons
 from src.keyboards.user_callback_datas import Tariffs
+from src.config import settings
 from src.services.keys_manager import create_key, prolong_key
 from src.services.payments import create_payment, check_payment
 from src.states.user_states import TariffState
@@ -250,9 +251,29 @@ async def clb_get_access_buy_tariff(callback: CallbackQuery, callback_data: Tari
             )
             return
 
+        # Owner получает ключ бесплатно, без создания платежа
+        if callback.from_user.id == settings.owner_id:
+            await update_inline_reply_markup(callback, edit_inline_markup_add_symbol, 0)
+            if key_id:
+                await prolong_key(
+                    bot=callback.bot,
+                    user_id=callback.from_user.id,
+                    tariff=tariff,
+                    key_id=int(key_id))
+            else:
+                finish_date = datetime.now() + timedelta(days=tariff.days)
+                await create_key(
+                    bot=callback.bot,
+                    user_id=callback.from_user.id,
+                    finish_date=finish_date,
+                    tariff_id=tariff.id,
+                    device=device)
+            await state.clear()
+            return
+
         price = tariff.price if not promo else int((tariff.price / 100) * (100 - promo.price))
         discount = "" if not promo else f" <b>({tariff.price}₽ - {promo.price}% скидка)</b>"
-        
+
         try:
             pay_url, label = await create_payment(
                 tariff=tariff,
