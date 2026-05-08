@@ -11,7 +11,7 @@ from src.database.crud.payments import (
 )
 from src.database.models import PaymentsOrm
 from src.logs import getLogger
-from src.services.keys_manager import process_success_payment
+from src.services.keys_manager import process_success_payment, cleanup_pending_old_keys
 from src.services.notifications import notification_service
 from src.services.payments import check_payment
 
@@ -133,5 +133,7 @@ async def start_scheduler(bot):
     # Проверка success платежей без ключа каждые 60 секунд (восстановление)
     scheduler.add_job(check_success_payments_without_key, 'interval', seconds=60, args=[bot])
     scheduler.add_job(reset_bypass_traffic, 'interval', hours=24, args=[bot])
+    # Удаление старых ключей после переноса (24ч отсрочка)
+    scheduler.add_job(cleanup_pending_old_keys, 'interval', minutes=5)
     await notification_service.init(scheduler, bot)
     scheduler.start()

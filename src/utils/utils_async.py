@@ -372,23 +372,39 @@ async def show_device_inst(message: Message, callback_data):
     device = callback_data.device
     text_settings = await get_text_settings()
 
-    video = getattr(text_settings, f"{device}_video")
+    file_id = getattr(text_settings, f"{device}_video")
     url = getattr(text_settings, f"{device}_url")
+    file_type = getattr(text_settings, f"{device}_file_type", None) or "video"
     kb = get_inline_markup_with_url("Скачать приложение", url) if url else None
     text = f"Инструкция для <b>{device.capitalize()}</b>:"
 
-    if not video and not url:
+    if not file_id and not url:
         await message.answer(
             text="К сожалению для этого устройства не предоставлено инструкций, попробуйте позже")
+        return
 
-    elif not video:
+    if not file_id:
         await message.answer(
             text=text,
             parse_mode=ParseMode.HTML,
             reply_markup=kb)
+        return
 
-    await message.answer_video(
-        caption=text,
-        parse_mode=ParseMode.HTML,
-        video=video,
-        reply_markup=kb)
+    if file_type == "photo":
+        await message.answer_photo(
+            photo=file_id,
+            caption=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb)
+    elif file_type == "document":
+        await message.answer_document(
+            document=file_id,
+            caption=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb)
+    else:
+        await message.answer_video(
+            caption=text,
+            parse_mode=ParseMode.HTML,
+            video=file_id,
+            reply_markup=kb)

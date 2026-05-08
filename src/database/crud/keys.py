@@ -184,6 +184,31 @@ async def update_key_transfer(key: KeysOrm):
             if ex_key:
                 ex_key.server_id = key.server_id
                 ex_key.key = key.key
+                ex_key.pending_old_server_id = key.pending_old_server_id
+                ex_key.pending_delete_at = key.pending_delete_at
+
+
+async def get_keys_pending_delete() -> list[KeysOrm]:
+    """Ключи, у которых истёк период отсрочки удаления со старого сервера."""
+    async with AsyncSessionLocal() as session:
+        now = datetime.now(timezone.utc)
+        result = await session.execute(
+            select(KeysOrm).where(
+                KeysOrm.pending_old_server_id.isnot(None),
+                KeysOrm.pending_delete_at <= now,
+            )
+        )
+        return result.scalars().all()
+
+
+async def clear_pending_delete(key_id: int) -> None:
+    """Сбрасывает поля отложенного удаления после успешного удаления со старого сервера."""
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            key = await session.get(KeysOrm, key_id)
+            if key:
+                key.pending_old_server_id = None
+                key.pending_delete_at = None
 
 
 async def get_user_active_bypass_keys(user_id: int) -> list[KeysOrm]:

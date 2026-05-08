@@ -56,7 +56,7 @@ async def clb_show_device_inst(callback: CallbackQuery, callback_data: EditServe
 @router.callback_query(EditInst.filter(F.action == "change_video"))
 async def clb_change_device_video(callback: CallbackQuery, callback_data: EditServers, state: FSMContext):
     await callback.answer()
-    await callback.message.answer("Отправьте новое видео для инструкции  ⬇️")
+    await callback.message.answer("Отправьте файл для инструкции (видео, фото или PDF)  ⬇️")
     await state.set_state(AdminInst.change_video)
     await state.update_data(callback_data=callback_data)
 
@@ -69,7 +69,7 @@ async def clb_change_device_link(callback: CallbackQuery, callback_data: EditSer
     await state.update_data(callback_data=callback_data)
 
 
-"""───────────────────────────────────────────── Edit video ─────────────────────────────────────────────"""
+"""───────────────────────────────────────────── Edit video/file ─────────────────────────────────────────────"""
 
 
 @router.message(F.video, AdminInst.change_video)
@@ -77,15 +77,49 @@ async def get_text_change_video(message: Message, state: FSMContext):
     try:
         state_data = await state.get_data()
         callback_data = state_data["callback_data"]
-        kwargs = {f"{callback_data.device}_video": message.video.file_id}
-        await change_settings_value(**kwargs)
-        await message.answer(
-            text=f"Видео было успешно изменено!",
-            parse_mode=ParseMode.HTML)
-
+        await change_settings_value(**{
+            f"{callback_data.device}_video": message.video.file_id,
+            f"{callback_data.device}_file_type": "video",
+        })
+        await message.answer(text="Видео было успешно изменено!", parse_mode=ParseMode.HTML)
         await state.set_state(AdminMenu.inst_menu)
         await show_device_inst(message, callback_data)
+    except Exception as e:
+        await message.answer(f"Error:\n{e}")
+        logger.error(e, exc_info=True)
+        await state.clear()
 
+
+@router.message(F.photo, AdminInst.change_video)
+async def get_photo_change_video(message: Message, state: FSMContext):
+    try:
+        state_data = await state.get_data()
+        callback_data = state_data["callback_data"]
+        await change_settings_value(**{
+            f"{callback_data.device}_video": message.photo[-1].file_id,
+            f"{callback_data.device}_file_type": "photo",
+        })
+        await message.answer(text="Фото было успешно загружено!", parse_mode=ParseMode.HTML)
+        await state.set_state(AdminMenu.inst_menu)
+        await show_device_inst(message, callback_data)
+    except Exception as e:
+        await message.answer(f"Error:\n{e}")
+        logger.error(e, exc_info=True)
+        await state.clear()
+
+
+@router.message(F.document, AdminInst.change_video)
+async def get_document_change_video(message: Message, state: FSMContext):
+    try:
+        state_data = await state.get_data()
+        callback_data = state_data["callback_data"]
+        await change_settings_value(**{
+            f"{callback_data.device}_video": message.document.file_id,
+            f"{callback_data.device}_file_type": "document",
+        })
+        await message.answer(text="Файл был успешно загружен!", parse_mode=ParseMode.HTML)
+        await state.set_state(AdminMenu.inst_menu)
+        await show_device_inst(message, callback_data)
     except Exception as e:
         await message.answer(f"Error:\n{e}")
         logger.error(e, exc_info=True)

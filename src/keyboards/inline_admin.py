@@ -356,7 +356,7 @@ def get_edit_inst_menu(device: str):
     btn_list = [
         [InlineKeyboardButton(text="Посмотреть", callback_data=EditInst(action="show", device=device).pack())],
         [
-            InlineKeyboardButton(text="Изменить видео", callback_data=EditInst(action="change_video", device=device).pack()),
+            InlineKeyboardButton(text="Изменить файл", callback_data=EditInst(action="change_video", device=device).pack()),
             InlineKeyboardButton(text="Изменить ссылку", callback_data=EditInst(action="change_link", device=device).pack()),
         ],
     ]

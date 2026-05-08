@@ -4,7 +4,7 @@ from aiogram import Bot
 from aiogram.enums import ParseMode
 from src.database.crud import change_test_sub, get_tariff
 from src.database.crud.keys import add_new_key, get_device_last_id, get_key_by_id, get_key_by_payment_id, update_key, delete_key, \
-    update_key_transfer, get_all_keys_server
+    update_key_transfer, get_all_keys_server, get_keys_pending_delete, clear_pending_delete
 from src.database.crud.promo import activate_promo
 from src.database.crud.payments import is_key_issued, mark_key_issued, mark_payment_as_error
 from src.database.crud.servers import get_sorted_servers, get_server_by_id, get_bypass_servers
@@ -312,30 +312,49 @@ async def transfer_all_keys_from_server_to_server(bot: Bot, first_server_id: int
 async def transfer_key_to_select_server(bot: Bot, key_id: int, server_id: int):
     try:
         key = await get_key_by_id(int(key_id))
-        old_server = await get_server_by_id(key.server_id)
+        old_server_id = key.server_id
 
-        # Удаление старого ключа с панельки
-        x3_class = X3UI(old_server)
-        x3_class.delete_user(key.name)
-
-        # Создание нового ключа
+        # Создание нового ключа на целевом сервере
         transfer_server = await get_server_by_id(int(server_id))
         x3_class = X3UI(transfer_server)
         days = (key.finish - datetime.now()).days
         x3_class.create_key(key.name, days)
         key_data = x3_class.get_key(key.name)
 
+        # Обновляем ключ в БД, сохраняем отложенное удаление со старого сервера
         key.server_id = transfer_server.id
         key.key = key_data
+        key.pending_old_server_id = old_server_id
+        key.pending_delete_at = datetime.now(timezone.utc) + timedelta(hours=24)
         await update_key_transfer(key)
 
-        logger.info(f"Был перенесен ключ на другой сервер: key: {key} to server: {transfer_server}")
-        text = f"Ваш ключ 🔑{get_key_name_without_user_id(key)} был перенесен на другой сервер.\nСрок действия ключа не изменился.\nСтарый ключ нужно удалить из приложения и добавить ключ ниже:"
+        logger.info(f"Был перенесен ключ на другой сервер: key: {key} to server: {transfer_server}. Старый ключ будет удалён через 24ч.")
+        text = f"Ваш ключ 🔑{get_key_name_without_user_id(key)} был перенесен на другой сервер.\nСрок действия ключа не изменился.\nСтарый ключ продолжит работать ещё 24 часа, затем его нужно заменить на новый:"
         await send_notification_to_user(bot, key.user_id, text)
         await send_notification_to_user(bot, key.user_id, key_data)
 
     except Exception as e:
         logger.error(f"Error transfer key {key_id} | to s_id: {server_id}: {e}", exc_info=True)
+
+
+async def cleanup_pending_old_keys():
+    """Удаляет старые ключи со старых серверов по истечении 24-часового периода отсрочки."""
+    keys = await get_keys_pending_delete()
+    if not keys:
+        return
+    logger.info(f"cleanup_pending_old_keys: found {len(keys)} keys to delete from old servers")
+    for key in keys:
+        try:
+            old_server = await get_server_by_id(key.pending_old_server_id)
+            if old_server:
+                x3_class = X3UI(old_server)
+                x3_class.delete_user(key.name)
+                logger.info(f"cleanup_pending_old_keys: deleted key {key.name} from server {old_server.id}")
+            else:
+                logger.warning(f"cleanup_pending_old_keys: server {key.pending_old_server_id} not found for key {key.id}, clearing anyway")
+            await clear_pending_delete(key.id)
+        except Exception as e:
+            logger.error(f"cleanup_pending_old_keys: error for key {key.id}: {e}", exc_info=True)
 
 
 async def process_success_payment(bot, payment: PaymentsOrm):

@@ -150,6 +150,8 @@ class KeysOrm(Base):
     is_test: Mapped[bool] = mapped_column(Boolean, nullable=False)
     is_bypass: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     traffic_reset_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    pending_old_server_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, default=None)
+    pending_delete_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True, default=None)
 
     @property
     def time_left(self) -> dict:
@@ -180,6 +182,12 @@ class TextSettingsOrm(Base):
 
     tv_video: Mapped[str] = mapped_column(Text, default=None, nullable=True)
     tv_url: Mapped[str] = mapped_column(Text, default=None, nullable=True)
+
+    iphone_file_type: Mapped[str] = mapped_column(String, default="video", nullable=False, server_default="video")
+    android_file_type: Mapped[str] = mapped_column(String, default="video", nullable=False, server_default="video")
+    macos_file_type: Mapped[str] = mapped_column(String, default="video", nullable=False, server_default="video")
+    windows_file_type: Mapped[str] = mapped_column(String, default="video", nullable=False, server_default="video")
+    tv_file_type: Mapped[str | None] = mapped_column(String, default="video", nullable=True)
 
     faq_list: Mapped[str] = mapped_column(MutableList.as_mutable(ARRAY(Text)), default=list)
     test_hours: Mapped[int] = mapped_column(Integer, default=48)
