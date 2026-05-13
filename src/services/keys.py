@@ -414,9 +414,13 @@ async def keys_control_task(bot):
                         await update_key(key)
 
                     elif hours == 0 and key.active:
-                        server = await get_server_by_id(key.server_id)
-                        x3 = X3UI(server)
-                        x3.turn_off_user(key.name)
+                        try:
+                            server = await get_server_by_id(key.server_id)
+                            if server:
+                                x3 = X3UI(server)
+                                x3.turn_off_user(key.name)
+                        except Exception as turn_off_err:
+                            logger.warning(f"Failed to turn off key {key.name} on server {key.server_id}: {turn_off_err}")
                         key.active = False
                         await update_key(key)
 
@@ -426,11 +430,15 @@ async def keys_control_task(bot):
                     hours += days * 60
 
                     if hours >= 24:
-                        server = await get_server_by_id(key.server_id)
-                        x3 = X3UI(server)
-                        if key.active:
-                            x3.turn_off_user(key.name)
-                        x3.delete_user(key.name)
+                        try:
+                            server = await get_server_by_id(key.server_id)
+                            if server:
+                                x3 = X3UI(server)
+                                if key.active:
+                                    x3.turn_off_user(key.name)
+                                x3.delete_user(key.name)
+                        except Exception as delete_err:
+                            logger.warning(f"Failed to delete key {key.name} from server {key.server_id}: {delete_err}")
                         await delete_key(key)
 
             except Exception as e:

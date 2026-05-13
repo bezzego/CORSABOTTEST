@@ -69,20 +69,24 @@ async def create_key(bot: Bot, user_id: int, finish_date: datetime, tariff_id: i
 
     days = (finish_date - datetime.now()).days
 
-    x3_class = X3UI(server=server)
-    create_resp = x3_class.create_key(name, days)
-    if not create_resp or create_resp.status_code != 200:
-        status = getattr(create_resp, "status_code", None)
-        body = (getattr(create_resp, "text", "") or "")[:200]
-        raise RuntimeError(
-            f"Create key failed for user_id={user_id} on server={server.host}: "
-            f"HTTP {status} body={body}"
-        )
-    key = x3_class.get_key(name)
-    if not key:
-        raise RuntimeError(
-            f"Create key failed for user_id={user_id} on server={server.host}: empty key data"
-        )
+    try:
+        x3_class = X3UI(server=server)
+        create_resp = x3_class.create_key(name, days)
+        if not create_resp or create_resp.status_code != 200:
+            status = getattr(create_resp, "status_code", None)
+            body = (getattr(create_resp, "text", "") or "")[:200]
+            raise RuntimeError(
+                f"Create key failed for user_id={user_id} on server={server.host}: "
+                f"HTTP {status} body={body}"
+            )
+        key = x3_class.get_key(name)
+        if not key:
+            raise RuntimeError(
+                f"Create key failed for user_id={user_id} on server={server.host}: empty key data"
+            )
+    except Exception as e:
+        logger.error(f"X3UI error creating key for user_id={user_id} on server={server.host}: {e}")
+        raise
 
     new_key = await add_new_key(
         user_id=user_id,
@@ -135,22 +139,26 @@ async def create_bypass_key(bot: Bot, user_id: int, finish_date: datetime, devic
 
     days = (finish_date - datetime.now()).days
 
-    x3_class = X3UI(server=server)
-    effective_traffic_limit = traffic_limit_gb if traffic_limit_gb is not None else server.traffic_limit_gb
-    create_resp = x3_class.create_key(name, days, traffic_limit_gb=effective_traffic_limit)
-    if not create_resp or create_resp.status_code != 200:
-        status = getattr(create_resp, "status_code", None)
-        body = (getattr(create_resp, "text", "") or "")[:200]
-        raise RuntimeError(
-            f"Create bypass key failed for user_id={user_id} on server={server.host}: "
-            f"HTTP {status} body={body}"
-        )
+    try:
+        x3_class = X3UI(server=server)
+        effective_traffic_limit = traffic_limit_gb if traffic_limit_gb is not None else server.traffic_limit_gb
+        create_resp = x3_class.create_key(name, days, traffic_limit_gb=effective_traffic_limit)
+        if not create_resp or create_resp.status_code != 200:
+            status = getattr(create_resp, "status_code", None)
+            body = (getattr(create_resp, "text", "") or "")[:200]
+            raise RuntimeError(
+                f"Create bypass key failed for user_id={user_id} on server={server.host}: "
+                f"HTTP {status} body={body}"
+            )
 
-    key_url = x3_class.get_key(name)
-    if not key_url:
-        raise RuntimeError(
-            f"Create bypass key failed for user_id={user_id} on server={server.host}: empty key data"
-        )
+        key_url = x3_class.get_key(name)
+        if not key_url:
+            raise RuntimeError(
+                f"Create bypass key failed for user_id={user_id} on server={server.host}: empty key data"
+            )
+    except Exception as e:
+        logger.error(f"X3UI error creating bypass key for user_id={user_id} on server={server.host}: {e}")
+        raise
 
     # Заменяем IP:PORT сервера A на адрес шлюза (сервер Б)
     if server.gateway_host and server.gateway_port:
@@ -216,8 +224,12 @@ async def prolong_key(bot: Bot, user_id: int, tariff: TariffsOrm, key_id: int, _
             raise RuntimeError(f"Key {key_id} disappeared after update")
             
         days = key.finish - datetime.now()
-        x3_class = X3UI(server)
-        x3_class.turn_on_user(key.name, days.days)
+        try:
+            x3_class = X3UI(server)
+            x3_class.turn_on_user(key.name, days.days)
+        except Exception as x3_err:
+            logger.error(f"X3UI error when prolonging key {key_id} on server {server.host}: {x3_err}")
+            raise
         logger.info(f"Был продлен ключ: {key}\nХост: {server.host}\nВыбранный тариф: {tariff}")
 
         # ИСПРАВЛЕНИЕ: Отправка уведомления обернута в try-except
@@ -339,22 +351,28 @@ async def transfer_key_to_select_server(bot: Bot, key_id: int, server_id: int):
 
 async def cleanup_pending_old_keys():
     """Удаляет старые ключи со старых серверов по истечении 24-часового периода отсрочки."""
-    keys = await get_keys_pending_delete()
-    if not keys:
-        return
-    logger.info(f"cleanup_pending_old_keys: found {len(keys)} keys to delete from old servers")
-    for key in keys:
-        try:
-            old_server = await get_server_by_id(key.pending_old_server_id)
-            if old_server:
-                x3_class = X3UI(old_server)
-                x3_class.delete_user(key.name)
-                logger.info(f"cleanup_pending_old_keys: deleted key {key.name} from server {old_server.id}")
-            else:
-                logger.warning(f"cleanup_pending_old_keys: server {key.pending_old_server_id} not found for key {key.id}, clearing anyway")
-            await clear_pending_delete(key.id)
-        except Exception as e:
-            logger.error(f"cleanup_pending_old_keys: error for key {key.id}: {e}", exc_info=True)
+    try:
+        keys = await get_keys_pending_delete()
+        if not keys:
+            return
+        logger.info(f"cleanup_pending_old_keys: found {len(keys)} keys to delete from old servers")
+        for key in keys:
+            try:
+                old_server = await get_server_by_id(key.pending_old_server_id)
+                if old_server:
+                    try:
+                        x3_class = X3UI(old_server)
+                        x3_class.delete_user(key.name)
+                        logger.info(f"cleanup_pending_old_keys: deleted key {key.name} from server {old_server.id}")
+                    except Exception as x3_err:
+                        logger.warning(f"cleanup_pending_old_keys: X3UI error for key {key.name} on server {old_server.id}: {x3_err}")
+                else:
+                    logger.warning(f"cleanup_pending_old_keys: server {key.pending_old_server_id} not found for key {key.id}, clearing anyway")
+                await clear_pending_delete(key.id)
+            except Exception as e:
+                logger.error(f"cleanup_pending_old_keys: error for key {key.id}: {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"cleanup_pending_old_keys: fatal error: {e}", exc_info=True)
 
 
 async def process_success_payment(bot, payment: PaymentsOrm):
