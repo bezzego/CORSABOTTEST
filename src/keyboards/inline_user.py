@@ -35,11 +35,14 @@ async def get_key_stats(key_id: int, include_traffic: bool = False) -> str:
         server = await get_server_by_id(key.server_id)
         if server:
             traffic = X3UI(server).get_client_traffic(key.name)
-            if traffic and traffic["total"] > 0:
+            if traffic is not None:
                 used_gb = (traffic["up"] + traffic["down"]) / 1024 ** 3
-                limit_gb = traffic["total"] / 1024 ** 3
-                remaining_gb = max(0.0, limit_gb - used_gb)
-                return base + f"\nТрафик: {used_gb:.1f} GB из {limit_gb:.1f} GB (осталось {remaining_gb:.1f} GB)"
+                if traffic["total"] > 0:
+                    limit_gb = traffic["total"] / 1024 ** 3
+                    remaining_gb = max(0.0, limit_gb - used_gb)
+                    return base + f"\nТрафик: {used_gb:.1f} GB из {limit_gb:.1f} GB (осталось {remaining_gb:.1f} GB)"
+                else:
+                    return base + f"\nТрафик: {used_gb:.1f} GB (без лимита)"
     except Exception:
         logger.warning("get_key_stats: не удалось получить трафик для key_id=%s", key_id, exc_info=True)
 

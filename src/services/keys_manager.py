@@ -332,6 +332,8 @@ async def transfer_key_to_select_server(bot: Bot, key_id: int, server_id: int):
         days = (key.finish - datetime.now()).days
         x3_class.create_key(key.name, days)
         key_data = x3_class.get_key(key.name)
+        if not key_data:
+            raise RuntimeError(f"get_key returned None for {key.name} on server {transfer_server.host}")
 
         # Обновляем ключ в БД, сохраняем отложенное удаление со старого сервера
         key.server_id = transfer_server.id
