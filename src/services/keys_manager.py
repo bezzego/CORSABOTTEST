@@ -84,6 +84,11 @@ async def create_key(bot: Bot, user_id: int, finish_date: datetime, tariff_id: i
             raise RuntimeError(
                 f"Create key failed for user_id={user_id} on server={server.host}: empty key data"
             )
+        if server.gateway_host and server.gateway_port:
+            from urllib.parse import urlparse, urlunparse
+            parsed = urlparse(key)
+            userinfo = parsed.netloc.split('@')[0]
+            key = urlunparse(parsed._replace(netloc=f"{userinfo}@{server.gateway_host}:{server.gateway_port}"))
     except Exception as e:
         logger.error(f"X3UI error creating key for user_id={user_id} on server={server.host}: {e}")
         raise
@@ -334,6 +339,11 @@ async def transfer_key_to_select_server(bot: Bot, key_id: int, server_id: int):
         key_data = x3_class.get_key(key.name)
         if not key_data:
             raise RuntimeError(f"get_key returned None for {key.name} on server {transfer_server.host}")
+        if transfer_server.gateway_host and transfer_server.gateway_port:
+            from urllib.parse import urlparse, urlunparse
+            parsed = urlparse(key_data)
+            userinfo = parsed.netloc.split('@')[0]
+            key_data = urlunparse(parsed._replace(netloc=f"{userinfo}@{transfer_server.gateway_host}:{transfer_server.gateway_port}"))
 
         # Обновляем ключ в БД, сохраняем отложенное удаление со старого сервера
         key.server_id = transfer_server.id

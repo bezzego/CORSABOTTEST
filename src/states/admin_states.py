@@ -61,6 +61,7 @@ class AdminServers(StatesGroup):
     add_password = State()
     add_flow = State()
     add_is_bypass = State()
+    add_use_gateway = State()
     add_traffic_limit = State()
     add_gateway_host = State()
     add_gateway_port = State()

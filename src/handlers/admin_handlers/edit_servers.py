@@ -45,6 +45,11 @@ async def show_server(server_id: int, callback: CallbackQuery, reply_markup=None
                 f"\nШлюз (адрес): <code>{server.gateway_host}</code>"
                 f"\nШлюз (порт): <code>{server.gateway_port}</code>"
             )
+        elif server.gateway_host:
+            bypass_info = (
+                f"\nШлюз (адрес): <code>{server.gateway_host}</code>"
+                f"\nШлюз (порт): <code>{server.gateway_port}</code>"
+            )
         return await callback.message.answer(
             text=f"""
 ID: <code>{server.id}</code>
@@ -732,6 +737,32 @@ async def get_text_add_is_bypass(message: Message, state: FSMContext):
                 parse_mode=ParseMode.HTML)
             await state.set_state(AdminServers.add_traffic_limit)
         else:
+            await message.answer(
+                text="Настроить шлюз для этого сервера? Если да — ключи будут выдаваться с IP шлюза, а не самого сервера. (введите <code>да</code>/<code>нет</code>)",
+                parse_mode=ParseMode.HTML)
+            await state.set_state(AdminServers.add_use_gateway)
+
+    except Exception as e:
+        await message.answer(f"Error:\n{e}")
+        logger.error(e, exc_info=True)
+        await state.clear()
+
+
+@router.message(AdminServers.add_use_gateway)
+async def get_text_add_use_gateway(message: Message, state: FSMContext):
+    try:
+        text = message.text.strip().lower()
+        if text not in ("yes", "no", "да", "нет", "y", "n", "+", "-"):
+            await message.answer("Ошибка! Введите да/нет, попробуйте снова.")
+            return
+
+        use_gateway = text in ("yes", "да", "y", "+")
+        if use_gateway:
+            await message.answer(
+                text="Введите адрес шлюза (IP или домен, например <code>1.2.3.4</code>):",
+                parse_mode=ParseMode.HTML)
+            await state.set_state(AdminServers.add_gateway_host)
+        else:
             await _show_add_server_confirm(message, state)
 
     except Exception as e:
@@ -799,6 +830,11 @@ async def _show_add_server_confirm(message: Message, state: FSMContext):
     if is_bypass:
         bypass_info = (
             f"\nЛимит трафика: <b>{state_data.get('traffic_limit_gb')} ГБ</b>"
+            f"\nАдрес шлюза: <b>{state_data.get('gateway_host')}</b>"
+            f"\nПорт шлюза: <b>{state_data.get('gateway_port')}</b>"
+        )
+    elif state_data.get("gateway_host"):
+        bypass_info = (
             f"\nАдрес шлюза: <b>{state_data.get('gateway_host')}</b>"
             f"\nПорт шлюза: <b>{state_data.get('gateway_port')}</b>"
         )
