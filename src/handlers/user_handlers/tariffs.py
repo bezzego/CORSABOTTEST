@@ -1,4 +1,7 @@
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+MSK = ZoneInfo("Europe/Moscow")
 
 from aiogram import Router, F
 from aiogram.enums import ParseMode
@@ -166,7 +169,9 @@ async def get_text_promo(message: Message, state: FSMContext):
                 return
 
         elif promo.finish_time is not None:
-            if datetime.now() > promo.finish_time:
+            now_msk = datetime.now(MSK)
+            ft = promo.finish_time.astimezone(MSK) if promo.finish_time.tzinfo else promo.finish_time.replace(tzinfo=MSK)
+            if now_msk > ft:
                 await message.answer(
                     "Промокод был использован или его срок действия истек, попробуйте еще раз")
                 await state.set_state(TariffState.buy_tariff)
@@ -261,7 +266,7 @@ async def clb_get_access_buy_tariff(callback: CallbackQuery, callback_data: Tari
                     tariff=tariff,
                     key_id=int(key_id))
             else:
-                finish_date = datetime.now() + timedelta(days=tariff.days)
+                finish_date = datetime.now(MSK) + timedelta(days=tariff.days)
                 await create_key(
                     bot=callback.bot,
                     user_id=callback.from_user.id,

@@ -1,5 +1,8 @@
 import re
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+MSK = ZoneInfo("Europe/Moscow")
 from typing import Optional
 from aiogram import Router, F
 from aiogram.enums import ParseMode
@@ -224,7 +227,7 @@ async def clb_test_sub_select_device(callback: CallbackQuery, callback_data: Tes
     await create_key(
         bot=callback.bot,
         user_id=callback.from_user.id,
-        finish_date=datetime.now() + timedelta(hours=text_settings.test_hours),
+        finish_date=datetime.now(MSK) + timedelta(hours=text_settings.test_hours),
         tariff_id=None,
         device=callback_data.device,
         is_test=True)

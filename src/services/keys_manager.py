@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from zoneinfo import ZoneInfo
+
+MSK = ZoneInfo("Europe/Moscow")
 from aiogram import Bot
 from aiogram.enums import ParseMode
 from src.database.crud import change_test_sub, get_tariff
@@ -67,7 +70,8 @@ async def create_key(bot: Bot, user_id: int, finish_date: datetime, tariff_id: i
     device_id = await get_device_last_id(user_id, device)
     name = f'{settings.prefix}_{user_id}_{device}_{device_id}'
 
-    days = (finish_date - datetime.now()).days
+    finish_msk = finish_date.astimezone(MSK) if finish_date.tzinfo else finish_date.replace(tzinfo=MSK)
+    days = (finish_msk - datetime.now(MSK)).days
 
     try:
         x3_class = X3UI(server=server)
@@ -142,7 +146,8 @@ async def create_bypass_key(bot: Bot, user_id: int, finish_date: datetime, devic
     device_id = await get_device_last_id(user_id, device)
     name = f'{settings.prefix}_bypass_{user_id}_{device}_{device_id}'
 
-    days = (finish_date - datetime.now()).days
+    finish_msk = finish_date.astimezone(MSK) if finish_date.tzinfo else finish_date.replace(tzinfo=MSK)
+    days = (finish_msk - datetime.now(MSK)).days
 
     try:
         x3_class = X3UI(server=server)
@@ -215,7 +220,9 @@ async def prolong_key(bot: Bot, user_id: int, tariff: TariffsOrm, key_id: int, _
     
     try:
         add_days = tariff.days if tariff else _admin_days
-        key.finish = max(key.finish, datetime.now()) + timedelta(days=add_days)
+        now_msk = datetime.now(MSK)
+        current_finish = key.finish.astimezone(MSK) if key.finish and key.finish.tzinfo else (key.finish.replace(tzinfo=MSK) if key.finish else now_msk)
+        key.finish = max(current_finish, now_msk) + timedelta(days=add_days)
 
         if key.alerted:
             key.alerted = False
@@ -228,7 +235,8 @@ async def prolong_key(bot: Bot, user_id: int, tariff: TariffsOrm, key_id: int, _
         if not key:
             raise RuntimeError(f"Key {key_id} disappeared after update")
             
-        days = key.finish - datetime.now()
+        finish_msk = key.finish.astimezone(MSK) if key.finish.tzinfo else key.finish.replace(tzinfo=MSK)
+        days = finish_msk - datetime.now(MSK)
         try:
             x3_class = X3UI(server)
             x3_class.turn_on_user(key.name, days.days)
@@ -291,7 +299,8 @@ async def extend_bypass_key_if_exists(bot: Bot, user_id: int, new_finish: dateti
                     continue
                 bypass_key.finish = new_finish
                 await update_key(bypass_key)
-                days = (new_finish - datetime.now()).days
+                nf_msk = new_finish.astimezone(MSK) if new_finish.tzinfo else new_finish.replace(tzinfo=MSK)
+                days = (nf_msk - datetime.now(MSK)).days
                 x3 = X3UI(server)
                 # Продлеваем срок с актуальным лимитом трафика из настроек сервера
                 x3.turn_on_user(bypass_key.name, days, traffic_limit_gb=server.traffic_limit_gb)
@@ -334,7 +343,8 @@ async def transfer_key_to_select_server(bot: Bot, key_id: int, server_id: int):
         # Создание нового ключа на целевом сервере
         transfer_server = await get_server_by_id(int(server_id))
         x3_class = X3UI(transfer_server)
-        days = (key.finish - datetime.now()).days
+        finish_msk = key.finish.astimezone(MSK) if key.finish.tzinfo else key.finish.replace(tzinfo=MSK)
+        days = (finish_msk - datetime.now(MSK)).days
         x3_class.create_key(key.name, days)
         key_data = x3_class.get_key(key.name)
         if not key_data:
@@ -496,7 +506,7 @@ async def process_success_payment(bot, payment: PaymentsOrm):
             created_key = await create_key(
                 bot=bot,
                 user_id=payment.user_id,
-                finish_date=datetime.now() + timedelta(days=tariff.days),
+                finish_date=datetime.now(MSK) + timedelta(days=tariff.days),
                 tariff_id=tariff.id,
                 device=device,
                 is_test=False,
@@ -520,7 +530,7 @@ async def process_success_payment(bot, payment: PaymentsOrm):
                 created_key = await create_key(
                     bot=bot,
                     user_id=payment.user_id,
-                    finish_date=datetime.now() + timedelta(days=tariff.days),
+                    finish_date=datetime.now(MSK) + timedelta(days=tariff.days),
                     tariff_id=tariff.id,
                     device=device,
                     is_test=False,

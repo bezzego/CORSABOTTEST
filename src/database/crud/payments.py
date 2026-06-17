@@ -46,7 +46,7 @@ async def mark_payment_successful(payment: PaymentsOrm):
             payment = await session.get(PaymentsOrm, payment.id)
             if payment:
                 payment.status = PaymentStatus.success
-                payment.updated_at = datetime.now()
+                payment.updated_at = datetime.now(ZoneInfo("Europe/Moscow"))
             return payment
 
 

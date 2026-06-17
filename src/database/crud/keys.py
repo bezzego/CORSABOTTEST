@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
 
 from datetime import timedelta
+from zoneinfo import ZoneInfo
+
+MSK = ZoneInfo("Europe/Moscow")
 
 from sqlalchemy import desc, func, select
 
@@ -48,7 +51,7 @@ async def add_new_key(
                 key=key,
                 device=device,
                 payment_id=payment_id,
-                start=datetime.now(),
+                start=datetime.now(MSK),
                 finish=finish,
                 name=name,
                 is_test=is_test,
