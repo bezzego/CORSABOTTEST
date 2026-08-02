@@ -355,7 +355,7 @@ async def transfer_key_to_select_server(bot: Bot, key_id: int, server_id: int):
         x3_class = X3UI(transfer_server)
         finish_msk = key.finish.astimezone(MSK) if key.finish.tzinfo else key.finish.replace(tzinfo=MSK)
         days_left = max((finish_msk - datetime.now(MSK)).days, 0)
-        create_resp = x3_class.create_key(key.name, days_left)
+        create_resp = await asyncio.to_thread(x3_class.create_key, key.name, days_left)
         if not create_resp or create_resp.status_code != 200:
             status = getattr(create_resp, "status_code", None)
             body = (getattr(create_resp, "text", "") or "")[:200]
@@ -364,7 +364,7 @@ async def transfer_key_to_select_server(bot: Bot, key_id: int, server_id: int):
                 f"server={transfer_server.host}: HTTP {status} body={body}"
             )
 
-        key_data = x3_class.get_key(key.name)
+        key_data = await asyncio.to_thread(x3_class.get_key, key.name)
         if not key_data:
             raise RuntimeError(f"get_key returned None for {key.name} on server {transfer_server.host}")
 

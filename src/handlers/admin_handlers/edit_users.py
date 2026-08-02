@@ -2,6 +2,7 @@ import asyncio
 
 from aiogram import Router, F
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
@@ -26,6 +27,12 @@ logger = getLogger(__name__)
 
 
 """───────────────────────────────────────────── Func ─────────────────────────────────────────────"""
+async def answer_callback_safe(callback: CallbackQuery) -> None:
+    try:
+        await callback.answer()
+    except TelegramBadRequest as e:
+        if "query is too old" not in str(e):
+            raise
 
 
 """───────────────────────────────────────────── Commands and Reply ─────────────────────────────────────────────"""
@@ -298,13 +305,14 @@ async def clb_select_transfer_servers(callback: CallbackQuery, callback_data: Tr
     key = await get_key_by_id(key_id)
     server_id = int(callback_data.server_id)
 
-    await callback.answer()
+    await answer_callback_safe(callback)
     if key.server_id == server_id:
         await callback.message.answer(
             text="Ключ уже находится на этом сервере.")
         await state.set_state(AdminMenu.users_menu)
         return
 
+    await callback.message.answer("Перенос ключа запущен. Проверяю целевой сервер и создаю новый ключ...")
     try:
         await transfer_key_to_select_server(callback.bot, key_id, server_id)
     except Exception as e:
@@ -327,7 +335,7 @@ async def clb_select_first_server_transfer_all_keys(callback: CallbackQuery, cal
     servers = await get_servers()
     # Remove the selected server from the list
     servers = [s for s in servers if s.id != int(callback_data.server_id)]
-    await callback.answer()
+    await answer_callback_safe(callback)
     await callback.message.answer(
         text="Выберите сервер, на который будут перенесены все ключи:",
         reply_markup=await get_transfer_server_buttons(TransferKeyServer, servers))
@@ -339,7 +347,7 @@ async def clb_select_first_server_transfer_all_keys(callback: CallbackQuery, cal
 @router.callback_query(TransferKeyServer.filter(F.action == "select"), AdminUsers.transfer_all_keys_select_second)
 async def clb_select_second_server_transfer_all_keys(callback: CallbackQuery, callback_data: TransferKeyServer, state: FSMContext):
     state_data = await state.get_data()
-    await callback.answer()
+    await answer_callback_safe(callback)
     first_server_id = int(state_data["server_id_first"])
     second_server_id = int(callback_data.server_id)
 
@@ -364,7 +372,7 @@ async def clb_select_second_server_transfer_all_keys(callback: CallbackQuery, ca
 
 @router.callback_query(SpamMessages.filter(F.action == "user"))
 async def clb_spam_messages_user(callback: CallbackQuery, callback_data: SpamMessages, state: FSMContext):
-    await callback.answer()
+    await answer_callback_safe(callback)
     await callback.message.answer("Введите ID/username пользователя ⬇️")
     await state.set_state(AdminUsers.spam_messages_user_select)
     await state.update_data(callback_data=callback_data)
