@@ -330,25 +330,44 @@ async def check_connection(server: ServersOrm):
 
 async def transfer_all_keys_from_server_to_server(bot: Bot, first_server_id: int, second_server_id: int):
     keys_to_transfer = await get_all_keys_server(first_server_id)
+    transferred_count = 0
     if keys_to_transfer:
         for key in keys_to_transfer:
             await transfer_key_to_select_server(bot, key.id, second_server_id)
+            transferred_count += 1
+    return transferred_count
 
 
 async def transfer_key_to_select_server(bot: Bot, key_id: int, server_id: int):
-    try:
-        key = await get_key_by_id(int(key_id))
-        old_server_id = key.server_id
+    key = await get_key_by_id(int(key_id))
+    if not key:
+        raise ValueError(f"Key {key_id} not found")
 
-        # Создание нового ключа на целевом сервере
-        transfer_server = await get_server_by_id(int(server_id))
+    old_server_id = key.server_id
+    if old_server_id == int(server_id):
+        raise ValueError(f"Key {key_id} is already on server {server_id}")
+
+    transfer_server = await get_server_by_id(int(server_id))
+    if not transfer_server:
+        raise ValueError(f"Target server {server_id} not found")
+
+    try:
         x3_class = X3UI(transfer_server)
         finish_msk = key.finish.astimezone(MSK) if key.finish.tzinfo else key.finish.replace(tzinfo=MSK)
-        days = (finish_msk - datetime.now(MSK)).days
-        x3_class.create_key(key.name, days)
+        days_left = max((finish_msk - datetime.now(MSK)).days, 0)
+        create_resp = x3_class.create_key(key.name, days_left)
+        if not create_resp or create_resp.status_code != 200:
+            status = getattr(create_resp, "status_code", None)
+            body = (getattr(create_resp, "text", "") or "")[:200]
+            raise RuntimeError(
+                f"Create key on target server failed for key_id={key_id} "
+                f"server={transfer_server.host}: HTTP {status} body={body}"
+            )
+
         key_data = x3_class.get_key(key.name)
         if not key_data:
             raise RuntimeError(f"get_key returned None for {key.name} on server {transfer_server.host}")
+
         if transfer_server.gateway_host and transfer_server.gateway_port:
             from urllib.parse import urlparse, urlunparse
             parsed = urlparse(key_data)
@@ -366,9 +385,10 @@ async def transfer_key_to_select_server(bot: Bot, key_id: int, server_id: int):
         text = f"Ваш ключ 🔑{get_key_name_without_user_id(key)} был перенесен на другой сервер.\nСрок действия ключа не изменился.\nСтарый ключ продолжит работать ещё 24 часа, затем его нужно заменить на новый:"
         await send_notification_to_user(bot, key.user_id, text)
         await send_notification_to_user(bot, key.user_id, key_data)
-
+        return key
     except Exception as e:
         logger.error(f"Error transfer key {key_id} | to s_id: {server_id}: {e}", exc_info=True)
+        raise
 
 
 async def cleanup_pending_old_keys():

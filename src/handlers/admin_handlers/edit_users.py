@@ -305,7 +305,15 @@ async def clb_select_transfer_servers(callback: CallbackQuery, callback_data: Tr
         await state.set_state(AdminMenu.users_menu)
         return
 
-    await transfer_key_to_select_server(callback.bot, key_id, server_id)
+    try:
+        await transfer_key_to_select_server(callback.bot, key_id, server_id)
+    except Exception as e:
+        logger.error(f"Failed to transfer key {key_id} to server {server_id}: {e}", exc_info=True)
+        await callback.message.answer(
+            text=f"Ошибка переноса ключа:\n{e}")
+        await state.set_state(AdminMenu.users_menu)
+        return
+
     await callback.message.answer(
         text="Ключ успешно перенесен, пользователь был уведомлен.")
     await state.set_state(AdminMenu.users_menu)
@@ -339,9 +347,16 @@ async def clb_select_second_server_transfer_all_keys(callback: CallbackQuery, ca
         text="Перенос всех ключей...")
     await state.set_state(AdminMenu.users_menu)
 
-    await transfer_all_keys_from_server_to_server(callback.bot, first_server_id, second_server_id)
+    try:
+        transferred_count = await transfer_all_keys_from_server_to_server(callback.bot, first_server_id, second_server_id)
+    except Exception as e:
+        logger.error(f"Failed to transfer keys from server {first_server_id} to {second_server_id}: {e}", exc_info=True)
+        await callback.message.answer(
+            text=f"Ошибка переноса ключей:\n{e}")
+        return
+
     await callback.message.answer(
-        text="Все ключи были успешно перенесены, пользователи были уведомлены.")
+        text=f"Ключи успешно перенесены: {transferred_count}. Пользователи были уведомлены.")
 
 
 """───────────────────────────────────────────── Callbacks Spam ─────────────────────────────────────────────"""

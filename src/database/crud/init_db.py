@@ -10,6 +10,7 @@ async def init_database():
         await connection.run_sync(Base.metadata.create_all)
         await _migrate_add_tv_columns(connection)
         await _migrate_add_traffic_reset_at(connection)
+        await _migrate_add_key_transfer_columns(connection)
 
     await create_default_settings_rows()
 
@@ -18,6 +19,16 @@ async def _migrate_add_traffic_reset_at(connection):
     """Добавляет колонку traffic_reset_at в keys если её нет"""
     await connection.execute(text(
         "ALTER TABLE keys ADD COLUMN IF NOT EXISTS traffic_reset_at TIMESTAMPTZ"
+    ))
+
+
+async def _migrate_add_key_transfer_columns(connection):
+    """Добавляет поля для отложенного удаления старого ключа после переноса."""
+    await connection.execute(text(
+        "ALTER TABLE keys ADD COLUMN IF NOT EXISTS pending_old_server_id BIGINT"
+    ))
+    await connection.execute(text(
+        "ALTER TABLE keys ADD COLUMN IF NOT EXISTS pending_delete_at TIMESTAMPTZ"
     ))
 
 
