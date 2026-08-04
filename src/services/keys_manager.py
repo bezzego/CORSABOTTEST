@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from zoneinfo import ZoneInfo
@@ -17,7 +18,7 @@ from src.logs import getLogger
 from src.services.keys import X3UI
 from src.services.notifications import notification_service
 from src.utils.utils import get_key_name_without_user_id
-from src.utils.utils_async import send_admins_message, send_notification_to_user
+from src.utils.utils_async import send_admins_message, send_notification_to_user, send_owner_message
 from src.config import settings
 
 logger = getLogger(__name__)
@@ -35,10 +36,10 @@ def create_key_dec(func):
             return result
         except Exception as e:
             logger.error(f"Error create key {args if args else ''} | {kwargs}: {e}", exc_info=True)
-            # Отправляем уведомление админам, но ПРОБРАСЫВАЕМ исключение дальше
+            # Отправляем техническую ошибку владельцу, но пробрасываем исключение дальше.
             try:
-                await send_admins_message(bot=kwargs.get("bot"),
-                                          text=f"У пользователя id={kwargs.get('user_id')} ошибка при создании ключа:\n\n{str(e)}")
+                await send_owner_message(bot=kwargs.get("bot"),
+                                         text=f"У пользователя id={kwargs.get('user_id')} ошибка при создании ключа:\n\n{str(e)}")
             except:
                 pass  # Не блокируем проброс исключения из-за ошибки отправки
             raise  # Пробрасываем исключение дальше, чтобы process_success_payment мог обработать
@@ -497,7 +498,7 @@ async def process_success_payment(bot, payment: PaymentsOrm):
             error_msg = f"Тариф {payment.tariff_id} не найден в базе данных"
             logger.error(f"Tariff {payment.tariff_id} not found for payment {payment.label} (user_id={payment.user_id})")
             await mark_payment_as_error(payment.id, error_msg)
-            await send_admins_message(
+            await send_owner_message(
                 bot=bot,
                 text=f"⚠️ Платеж {payment.label} (user_id={payment.user_id}) помечен как ERROR:\n{error_msg}\n\nRecovery больше не будет пытаться обработать этот платеж."
             )
@@ -542,7 +543,7 @@ async def process_success_payment(bot, payment: PaymentsOrm):
             key = await get_key_by_id(key_id)
             if not key:
                 logger.error(f"Key {key_id} not found for payment {payment.label} (user_id={payment.user_id}). Creating new key instead.")
-                await send_admins_message(
+                await send_owner_message(
                     bot=bot,
                     text=f"⚠️ Ключ {key_id} не найден для платежа {payment.label} (user_id={payment.user_id}). Создается новый ключ."
                 )
@@ -585,7 +586,7 @@ async def process_success_payment(bot, payment: PaymentsOrm):
         
     except Exception as e:
         logger.error(f"Error processing payment {payment.label}: {e}", exc_info=True)
-        await send_admins_message(
+        await send_owner_message(
             bot=bot,
             text=f"⚠️ Ошибка при обработке платежа {payment.label} (user_id={payment.user_id}):\n\n{str(e)}"
         )

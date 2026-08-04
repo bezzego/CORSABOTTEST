@@ -15,6 +15,7 @@ from src.keyboards.inline_user import edit_inline_keyboard_select_tariff, edit_i
     edit_inline_markup_add_symbol, get_inline_markup_with_url
 from src.keyboards.reply_user import get_reply_user_btn
 from src.logs import getLogger
+from src.config import settings
 from src.services.notifications import notification_service
 import io
 import xlsxwriter
@@ -125,6 +126,19 @@ async def send_admins_message(bot, text: str):
 
         except Exception as e:
             logger.error(e)
+
+
+async def send_owner_message(bot, text: str):
+    """Отправка технического сообщения только владельцу."""
+    owner_id = int(getattr(settings, "owner_id", 0) or 0)
+    if not owner_id:
+        logger.error("OWNER_ID is not configured; owner message was not sent: %s", text)
+        return
+
+    try:
+        await bot.send_message(chat_id=owner_id, text=text)
+    except Exception as e:
+        logger.error(e)
 
 
 async def send_notification_to_user(bot, user_id: int, text: str):
